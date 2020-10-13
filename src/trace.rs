@@ -15,6 +15,182 @@ use std::process::Command;
 
 const MAX_INSTR_LEN: usize = 15;
 
+#[derive(Debug, Clone, Copy, Serialize)]
+pub enum MemoryMask {
+    Byte = 1,
+    Word = 2,
+    DWord = 4,
+    QWord = 8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub enum MemoryOp {
+    Read,
+    Write,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemoryHint {
+    address: u64,
+    operation: MemoryOp,
+    mask: MemoryMask,
+    data: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Trace {
+    instr: Vec<u8>,
+    regs: RegisterFile,
+    hints: Vec<MemoryHint>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RegisterFile {
+    rax: u64,
+    rbx: u64,
+    rcx: u64,
+    rdx: u64,
+    rsi: u64,
+    rdi: u64,
+    rsp: u64,
+    rbp: u64,
+    r8: u64,
+    r9: u64,
+    r10: u64,
+    r11: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
+    rip: u64,
+    rflags: u64,
+}
+
+impl RegisterFile {
+    fn value(&self, reg: Register) -> Result<u64> {
+        match reg {
+            // 8 bit regs.
+            Register::AL => Ok((self.rax as u8).into()),
+            Register::BL => Ok((self.rbx as u8).into()),
+            Register::CL => Ok((self.rcx as u8).into()),
+            Register::DL => Ok((self.rdx as u8).into()),
+            Register::AH => Ok(((self.rax >> 8) as u8).into()),
+            Register::BH => Ok(((self.rbx >> 8) as u8).into()),
+            Register::CH => Ok(((self.rcx >> 8) as u8).into()),
+            Register::DH => Ok(((self.rdx >> 8) as u8).into()),
+            Register::R8L => Ok((self.r8 as u8).into()),
+            Register::R9L => Ok((self.r9 as u8).into()),
+            Register::R10L => Ok((self.r10 as u8).into()),
+            Register::R11L => Ok((self.r11 as u8).into()),
+            Register::R12L => Ok((self.r12 as u8).into()),
+            Register::R13L => Ok((self.r13 as u8).into()),
+            Register::R14L => Ok((self.r14 as u8).into()),
+            Register::R15L => Ok((self.r15 as u8).into()),
+
+            // 16 bit regs.
+            Register::AX => Ok((self.rax as u16).into()),
+            Register::BX => Ok((self.rbx as u16).into()),
+            Register::CX => Ok((self.rcx as u16).into()),
+            Register::DX => Ok((self.rdx as u16).into()),
+            Register::SI => Ok((self.rsi as u16).into()),
+            Register::DI => Ok((self.rdi as u16).into()),
+            Register::SP => Ok((self.rsp as u16).into()),
+            Register::BP => Ok((self.rbp as u16).into()),
+            Register::R8W => Ok((self.r8 as u16).into()),
+            Register::R9W => Ok((self.r9 as u16).into()),
+            Register::R10W => Ok((self.r10 as u16).into()),
+            Register::R11W => Ok((self.r11 as u16).into()),
+            Register::R12W => Ok((self.r12 as u16).into()),
+            Register::R13W => Ok((self.r13 as u16).into()),
+            Register::R14W => Ok((self.r14 as u16).into()),
+            Register::R15W => Ok((self.r15 as u16).into()),
+
+            // 32 bit regs.
+            Register::EAX => Ok((self.rax as u32).into()),
+            Register::EBX => Ok((self.rbx as u32).into()),
+            Register::ECX => Ok((self.rcx as u32).into()),
+            Register::EDX => Ok((self.rdx as u32).into()),
+            Register::ESI => Ok((self.rsi as u32).into()),
+            Register::EDI => Ok((self.rdi as u32).into()),
+            Register::ESP => Ok((self.rsp as u32).into()),
+            Register::EBP => Ok((self.rbp as u32).into()),
+            Register::R8D => Ok((self.r8 as u32).into()),
+            Register::R9D => Ok((self.r9 as u32).into()),
+            Register::R10D => Ok((self.r10 as u32).into()),
+            Register::R11D => Ok((self.r11 as u32).into()),
+            Register::R12D => Ok((self.r12 as u32).into()),
+            Register::R13D => Ok((self.r13 as u32).into()),
+            Register::R14D => Ok((self.r14 as u32).into()),
+            Register::R15D => Ok((self.r15 as u32).into()),
+            Register::EIP => Ok((self.rip as u32).into()),
+
+            // 64 bit regs.
+            Register::RAX => Ok(self.rax),
+            Register::RBX => Ok(self.rbx),
+            Register::RCX => Ok(self.rcx),
+            Register::RDX => Ok(self.rdx),
+            Register::RSI => Ok(self.rsp),
+            Register::RDI => Ok(self.rdi),
+            Register::RSP => Ok(self.rsp),
+            Register::RBP => Ok(self.rbp),
+            Register::R8 => Ok(self.r8),
+            Register::R9 => Ok(self.r9),
+            Register::R10 => Ok(self.r10),
+            Register::R11 => Ok(self.r11),
+            Register::R12 => Ok(self.r12),
+            Register::R13 => Ok(self.r13),
+            Register::R14 => Ok(self.r14),
+            Register::R15 => Ok(self.r15),
+            Register::RIP => Ok(self.rip),
+
+            // Everything else (vector regs, control regs, debug regs, etc) is unsupported.
+            // NOTE(ww): We track rflags in this struct, but iced-x86 doesn't have a Register
+            // variant for it (presumably because it's unaddressable).
+            _ => Err(anyhow!("untracked register requested: {:?}", reg)),
+        }
+    }
+
+    // TODO(ww): This and below should be `fn effective_address<T: Bitness>`
+    fn effective_address32(&self, mem: &UsedMemory) -> Result<u64> {
+        let base = match mem.base() {
+            Register::None => 0,
+            reg => self.value(reg)? as u32,
+        };
+
+        let index = match mem.index() {
+            Register::None => 0,
+            reg => self.value(reg)? as u32,
+        };
+
+        let effective = base
+            .wrapping_add(index.wrapping_mul(mem.scale() as u32))
+            .wrapping_add(mem.displacement() as u32) as u32;
+
+        Ok(effective as u64)
+    }
+
+    fn effective_address64(&self, mem: &UsedMemory) -> Result<u64> {
+        // NOTE(ww): We assume a flat memory model. Otherwise, we'd need to
+        // handle the segment base address here as well.
+
+        let base = match mem.base() {
+            Register::None => 0,
+            reg => self.value(reg)?,
+        };
+
+        let index = match mem.index() {
+            Register::None => 0,
+            reg => self.value(reg)?,
+        };
+
+        let effective = base
+            .wrapping_add(index.wrapping_mul(mem.scale() as u64))
+            .wrapping_add(mem.displacement());
+
+        Ok(effective)
+    }
+}
+
 #[derive(Debug)]
 pub struct Tracer {
     pub bitness: u32,
@@ -258,180 +434,4 @@ impl Tracer {
 
         Ok(())
     }
-}
-
-#[derive(Debug, Serialize)]
-pub struct RegisterFile {
-    rax: u64,
-    rbx: u64,
-    rcx: u64,
-    rdx: u64,
-    rsi: u64,
-    rdi: u64,
-    rsp: u64,
-    rbp: u64,
-    r8: u64,
-    r9: u64,
-    r10: u64,
-    r11: u64,
-    r12: u64,
-    r13: u64,
-    r14: u64,
-    r15: u64,
-    rip: u64,
-    rflags: u64,
-}
-
-impl RegisterFile {
-    fn value(&self, reg: Register) -> Result<u64> {
-        match reg {
-            // 8 bit regs.
-            Register::AL => Ok((self.rax as u8).into()),
-            Register::BL => Ok((self.rbx as u8).into()),
-            Register::CL => Ok((self.rcx as u8).into()),
-            Register::DL => Ok((self.rdx as u8).into()),
-            Register::AH => Ok(((self.rax >> 8) as u8).into()),
-            Register::BH => Ok(((self.rbx >> 8) as u8).into()),
-            Register::CH => Ok(((self.rcx >> 8) as u8).into()),
-            Register::DH => Ok(((self.rdx >> 8) as u8).into()),
-            Register::R8L => Ok((self.r8 as u8).into()),
-            Register::R9L => Ok((self.r9 as u8).into()),
-            Register::R10L => Ok((self.r10 as u8).into()),
-            Register::R11L => Ok((self.r11 as u8).into()),
-            Register::R12L => Ok((self.r12 as u8).into()),
-            Register::R13L => Ok((self.r13 as u8).into()),
-            Register::R14L => Ok((self.r14 as u8).into()),
-            Register::R15L => Ok((self.r15 as u8).into()),
-
-            // 16 bit regs.
-            Register::AX => Ok((self.rax as u16).into()),
-            Register::BX => Ok((self.rbx as u16).into()),
-            Register::CX => Ok((self.rcx as u16).into()),
-            Register::DX => Ok((self.rdx as u16).into()),
-            Register::SI => Ok((self.rsi as u16).into()),
-            Register::DI => Ok((self.rdi as u16).into()),
-            Register::SP => Ok((self.rsp as u16).into()),
-            Register::BP => Ok((self.rbp as u16).into()),
-            Register::R8W => Ok((self.r8 as u16).into()),
-            Register::R9W => Ok((self.r9 as u16).into()),
-            Register::R10W => Ok((self.r10 as u16).into()),
-            Register::R11W => Ok((self.r11 as u16).into()),
-            Register::R12W => Ok((self.r12 as u16).into()),
-            Register::R13W => Ok((self.r13 as u16).into()),
-            Register::R14W => Ok((self.r14 as u16).into()),
-            Register::R15W => Ok((self.r15 as u16).into()),
-
-            // 32 bit regs.
-            Register::EAX => Ok((self.rax as u32).into()),
-            Register::EBX => Ok((self.rbx as u32).into()),
-            Register::ECX => Ok((self.rcx as u32).into()),
-            Register::EDX => Ok((self.rdx as u32).into()),
-            Register::ESI => Ok((self.rsi as u32).into()),
-            Register::EDI => Ok((self.rdi as u32).into()),
-            Register::ESP => Ok((self.rsp as u32).into()),
-            Register::EBP => Ok((self.rbp as u32).into()),
-            Register::R8D => Ok((self.r8 as u32).into()),
-            Register::R9D => Ok((self.r9 as u32).into()),
-            Register::R10D => Ok((self.r10 as u32).into()),
-            Register::R11D => Ok((self.r11 as u32).into()),
-            Register::R12D => Ok((self.r12 as u32).into()),
-            Register::R13D => Ok((self.r13 as u32).into()),
-            Register::R14D => Ok((self.r14 as u32).into()),
-            Register::R15D => Ok((self.r15 as u32).into()),
-            Register::EIP => Ok((self.rip as u32).into()),
-
-            // 64 bit regs.
-            Register::RAX => Ok(self.rax),
-            Register::RBX => Ok(self.rbx),
-            Register::RCX => Ok(self.rcx),
-            Register::RDX => Ok(self.rdx),
-            Register::RSI => Ok(self.rsp),
-            Register::RDI => Ok(self.rdi),
-            Register::RSP => Ok(self.rsp),
-            Register::RBP => Ok(self.rbp),
-            Register::R8 => Ok(self.r8),
-            Register::R9 => Ok(self.r9),
-            Register::R10 => Ok(self.r10),
-            Register::R11 => Ok(self.r11),
-            Register::R12 => Ok(self.r12),
-            Register::R13 => Ok(self.r13),
-            Register::R14 => Ok(self.r14),
-            Register::R15 => Ok(self.r15),
-            Register::RIP => Ok(self.rip),
-
-            // Everything else (vector regs, control regs, debug regs, etc) is unsupported.
-            // NOTE(ww): We track rflags in this struct, but iced-x86 doesn't have a Register
-            // variant for it (presumably because it's unaddressable).
-            _ => Err(anyhow!("untracked register requested: {:?}", reg)),
-        }
-    }
-
-    // TODO(ww): This and below should be `fn effective_address<T: Bitness>`
-    fn effective_address32(&self, mem: &UsedMemory) -> Result<u64> {
-        let base = match mem.base() {
-            Register::None => 0,
-            reg => self.value(reg)? as u32,
-        };
-
-        let index = match mem.index() {
-            Register::None => 0,
-            reg => self.value(reg)? as u32,
-        };
-
-        let effective = base
-            .wrapping_add(index.wrapping_mul(mem.scale() as u32))
-            .wrapping_add(mem.displacement() as u32) as u32;
-
-        Ok(effective as u64)
-    }
-
-    fn effective_address64(&self, mem: &UsedMemory) -> Result<u64> {
-        // NOTE(ww): We assume a flat memory model. Otherwise, we'd need to
-        // handle the segment base address here as well.
-
-        let base = match mem.base() {
-            Register::None => 0,
-            reg => self.value(reg)?,
-        };
-
-        let index = match mem.index() {
-            Register::None => 0,
-            reg => self.value(reg)?,
-        };
-
-        let effective = base
-            .wrapping_add(index.wrapping_mul(mem.scale() as u64))
-            .wrapping_add(mem.displacement());
-
-        Ok(effective)
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-pub enum MemoryMask {
-    Byte = 1,
-    Word = 2,
-    DWord = 4,
-    QWord = 8,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub enum MemoryOp {
-    Read,
-    Write,
-}
-
-#[derive(Debug, Serialize)]
-pub struct MemoryHint {
-    address: u64,
-    operation: MemoryOp,
-    mask: MemoryMask,
-    data: u64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Trace {
-    instr: Vec<u8>,
-    regs: RegisterFile,
-    hints: Vec<MemoryHint>,
 }
