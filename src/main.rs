@@ -32,18 +32,9 @@ fn app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn run() -> Result<()> {
-    let matches = app().get_matches();
-    let config = trace::TraceConfig {
-        bitness: matches.value_of("mode").unwrap().parse()?,
-        tracee: matches.value_of("tracee").unwrap().into(),
-        tracee_args: matches
-            .values_of("tracee-args")
-            .and_then(|v| Some(v.map(|a| a.to_string()).collect()))
-            .unwrap_or_else(|| vec![]),
-    };
+    let tracer = trace::Tracer::from(app().get_matches());
 
-    let traces = trace::trace(&config)?;
-
+    let traces = tracer.trace()?;
     serde_json::to_writer(std::io::stdout(), &traces)?;
 
     Ok(())
