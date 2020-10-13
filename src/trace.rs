@@ -16,10 +16,248 @@ use std::process::Command;
 const MAX_INSTR_LEN: usize = 15;
 
 #[derive(Debug)]
-pub struct TraceConfig {
+pub struct Tracer {
     pub bitness: u32,
     pub tracee: String,
     pub tracee_args: Vec<String>,
+}
+
+impl From<clap::ArgMatches<'_>> for Tracer {
+    fn from(matches: clap::ArgMatches) -> Self {
+        Self {
+            bitness: matches.value_of("mode").unwrap().parse().unwrap(),
+            tracee: matches.value_of("tracee").unwrap().into(),
+            tracee_args: matches
+                .values_of("tracee-args")
+                .and_then(|v| Some(v.map(|a| a.to_string()).collect()))
+                .unwrap_or_else(|| vec![]),
+        }
+    }
+}
+
+impl Tracer {
+    pub fn trace(&self) -> Result<Vec<Trace>> {
+        let tracee_pid = {
+            let child = Command::new(&self.tracee)
+                .args(&self.tracee_args)
+                .spawn_ptrace()?;
+            Pid::from_raw(child.id() as i32)
+        };
+
+        log::debug!(
+            "spawned {} for tracing as child {}",
+            self.tracee,
+            tracee_pid
+        );
+
+        // Our tracee is now live and ready to be traced, but in a stopped state.
+        // We set PTRACE_O_TRACEEXIT on it to make sure it stops right before
+        // finally exiting, giving us one last chance to do some inspection.
+        ptrace::setoptions(tracee_pid, ptrace::Options::PTRACE_O_TRACEEXIT)?;
+
+        // Time to start the show.
+        let mut traces = vec![];
+        loop {
+            let regs = self.tracee_regs(tracee_pid)?;
+            let (instr, instr_bytes) = self.tracee_instr(tracee_pid, &regs)?;
+
+            // Hints are generated in two phases: we build a complete list of
+            // expected hints (including all Read hints) in stage 1...
+            let mut hints = self.tracee_hints_stage1(tracee_pid, &instr, &regs)?;
+
+            log::debug!("step!");
+            ptrace::step(tracee_pid, None)?;
+
+            // ...then, after we've stepped the program, we fill in the data
+            // associated with each Write hint in stage 2.
+            self.tracee_hints_stage2(tracee_pid, &mut hints)?;
+
+            match wait::waitpid(tracee_pid, None)? {
+                wait::WaitStatus::Exited(_, status) => {
+                    log::debug!("exited with {}", status);
+                    break;
+                }
+                wait::WaitStatus::Signaled(_, _, _) => {
+                    log::debug!("signaled");
+                }
+                wait::WaitStatus::Stopped(_, signal) => {
+                    log::debug!("stopped with {:?}", signal);
+                }
+                wait::WaitStatus::StillAlive => {
+                    log::debug!("still alive");
+                }
+                s => {
+                    log::debug!("{:?}", s);
+                    break;
+                }
+            }
+
+            traces.push(Trace {
+                instr: instr_bytes[0..instr.len()].to_vec(),
+                regs: regs,
+                hints: hints,
+            })
+        }
+
+        Ok(traces)
+    }
+
+    fn tracee_regs(&self, pid: Pid) -> Result<RegisterFile> {
+        let user_regs = ptrace::getregs(pid)?;
+
+        Ok(RegisterFile {
+            rax: user_regs.rax,
+            rbx: user_regs.rbx,
+            rcx: user_regs.rcx,
+            rdx: user_regs.rdx,
+            rsi: user_regs.rsi,
+            rdi: user_regs.rdi,
+            rsp: user_regs.rsp,
+            rbp: user_regs.rbp,
+            r8: user_regs.r8,
+            r9: user_regs.r9,
+            r10: user_regs.r10,
+            r11: user_regs.r11,
+            r12: user_regs.r12,
+            r13: user_regs.r13,
+            r14: user_regs.r14,
+            r15: user_regs.r15,
+            rip: user_regs.rip,
+            rflags: user_regs.eflags,
+        })
+    }
+
+    fn tracee_instr(&self, pid: Pid, regs: &RegisterFile) -> Result<(Instruction, Vec<u8>)> {
+        let mut bytes = vec![0u8; MAX_INSTR_LEN];
+        let remote_iov = uio::RemoteIoVec {
+            base: regs.rip as usize,
+            len: MAX_INSTR_LEN,
+        };
+
+        // TODO(ww): Check the length here.
+        uio::process_vm_readv(
+            pid,
+            &[uio::IoVec::from_mut_slice(&mut bytes)],
+            &[remote_iov],
+        )?;
+
+        log::debug!("fetched instruction bytes: {:?}", bytes);
+
+        let mut decoder = Decoder::new(self.bitness, &bytes, DecoderOptions::NONE);
+        decoder.set_ip(regs.rip);
+
+        let instr = decoder.decode();
+        log::debug!("instr: {:?}", instr.code());
+
+        match instr.code() {
+            Code::INVALID => Err(anyhow!("invalid instruction")),
+            _ => Ok((instr, bytes)),
+        }
+    }
+
+    fn tracee_data(&self, pid: Pid, addr: u64, mask: MemoryMask) -> Result<u64> {
+        log::debug!("attempting to read tracee @ 0x{:x} ({:?})", addr, mask);
+
+        // NOTE(ww): Could probably use ptrace::read() here since we're always <= 64 bits,
+        // but I find process_vm_readv a little more readable.
+        let mut bytes = vec![0u8; mask as usize];
+        let remote_iov = uio::RemoteIoVec {
+            base: addr as usize,
+            len: mask as usize,
+        };
+
+        uio::process_vm_readv(
+            pid,
+            &[uio::IoVec::from_mut_slice(&mut bytes)],
+            &[remote_iov],
+        )?;
+
+        log::debug!("fetched data bytes: {:?}", bytes);
+
+        Ok(match mask {
+            MemoryMask::Byte => bytes[0] as u64,
+            MemoryMask::Word => u16::from_le_bytes(bytes.as_slice().try_into()?) as u64,
+            MemoryMask::DWord => u32::from_le_bytes(bytes.as_slice().try_into()?) as u64,
+            MemoryMask::QWord => u64::from_le_bytes(bytes.as_slice().try_into()?) as u64,
+        })
+    }
+
+    fn tracee_hints_stage1(
+        &self,
+        pid: Pid,
+        instr: &Instruction,
+        regs: &RegisterFile,
+    ) -> Result<Vec<MemoryHint>> {
+        log::debug!("memory hints stage 1");
+        let mut hints = vec![];
+
+        // TODO(ww): Memory waste.
+        let info = {
+            let mut info_factory = InstructionInfoFactory::new();
+            info_factory
+                .info_options(&instr, InstructionInfoOptions::NO_REGISTER_USAGE)
+                .clone()
+        };
+
+        for used_mem in info.used_memory() {
+            // We model writebacks as two separate memory ops, so split them up here.
+            let ops: &[MemoryOp] = match used_mem.access() {
+                OpAccess::Read => &[MemoryOp::Read],
+                OpAccess::Write => &[MemoryOp::Write],
+                OpAccess::ReadWrite => &[MemoryOp::Read, MemoryOp::Write],
+                op => return Err(anyhow!("unsupported memop: {:?}", op)),
+            };
+
+            let mask = match used_mem.memory_size() {
+                MemorySize::UInt8 | MemorySize::Int8 => MemoryMask::Byte,
+                MemorySize::UInt16 | MemorySize::Int16 => MemoryMask::Word,
+                MemorySize::UInt32 | MemorySize::Int32 => MemoryMask::DWord,
+                MemorySize::UInt64 | MemorySize::Int64 => MemoryMask::QWord,
+                size => return Err(anyhow!("unsupported memsize: {:?}", size)),
+            };
+
+            let addr = match self.bitness {
+                32 => regs.effective_address32(&used_mem)?,
+                64 => regs.effective_address64(&used_mem)?,
+                _ => unreachable!(),
+            };
+
+            log::debug!("effective virtual addr: {:x}", addr);
+
+            for op in ops {
+                let data = match op {
+                    MemoryOp::Read => self.tracee_data(pid, addr, mask)?,
+                    MemoryOp::Write => 0,
+                };
+
+                hints.push(MemoryHint {
+                    address: addr,
+                    operation: *op,
+                    mask: mask,
+                    data: data,
+                });
+            }
+
+            log::debug!("{:?}", used_mem);
+        }
+
+        Ok(hints)
+    }
+
+    fn tracee_hints_stage2(&self, pid: Pid, hints: &mut Vec<MemoryHint>) -> Result<()> {
+        log::debug!("memory hints stage 2");
+
+        for hint in hints.iter_mut() {
+            if hint.operation != MemoryOp::Write {
+                continue;
+            }
+
+            let data = self.tracee_data(pid, hint.address, hint.mask)?;
+            hint.data = data;
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -128,7 +366,8 @@ impl RegisterFile {
         }
     }
 
-    fn effective_address32(&self, instr: &Instruction, mem: &UsedMemory) -> Result<u64> {
+    // TODO(ww): This and below should be `fn effective_address<T: Bitness>`
+    fn effective_address32(&self, mem: &UsedMemory) -> Result<u64> {
         let base = match mem.base() {
             Register::None => 0,
             reg => self.value(reg)? as u32,
@@ -139,14 +378,14 @@ impl RegisterFile {
             reg => self.value(reg)? as u32,
         };
 
-        let mut effective = base
+        let effective = base
             .wrapping_add(index.wrapping_mul(mem.scale() as u32))
             .wrapping_add(mem.displacement() as u32) as u32;
 
         Ok(effective as u64)
     }
 
-    fn effective_address64(&self, instr: &Instruction, mem: &UsedMemory) -> Result<u64> {
+    fn effective_address64(&self, mem: &UsedMemory) -> Result<u64> {
         // NOTE(ww): We assume a flat memory model. Otherwise, we'd need to
         // handle the segment base address here as well.
 
@@ -160,7 +399,7 @@ impl RegisterFile {
             reg => self.value(reg)?,
         };
 
-        let mut effective = base
+        let effective = base
             .wrapping_add(index.wrapping_mul(mem.scale() as u64))
             .wrapping_add(mem.displacement());
 
@@ -195,233 +434,4 @@ pub struct Trace {
     instr: Vec<u8>,
     regs: RegisterFile,
     hints: Vec<MemoryHint>,
-}
-
-pub fn trace(config: &TraceConfig) -> Result<Vec<Trace>> {
-    log::debug!("asked to trace with config: {:?}", config);
-
-    let tracee_pid = {
-        let child = Command::new(&config.tracee)
-            .args(&config.tracee_args)
-            .spawn_ptrace()?;
-        Pid::from_raw(child.id() as i32)
-    };
-
-    log::debug!(
-        "spawned {} for tracing as child {}",
-        config.tracee,
-        tracee_pid
-    );
-
-    // Our tracee is now live and ready to be traced, but in a stopped state.
-    // We set PTRACE_O_TRACEEXIT on it to make sure it stops right before
-    // finally exiting, giving us one last chance to do some inspection.
-    ptrace::setoptions(tracee_pid, ptrace::Options::PTRACE_O_TRACEEXIT)?;
-
-    // Time to start the show.
-    let mut traces = vec![];
-    loop {
-        let regs = tracee_regs(tracee_pid)?;
-        let (instr, instr_bytes) = tracee_instr(&config, tracee_pid, &regs)?;
-
-        // Hints are generated in two phases: we build a complete list of
-        // expected hints (including all Read hints) in stage 1...
-        let mut hints = tracee_hints_stage1(&config, tracee_pid, &instr, &regs)?;
-
-        log::debug!("step!");
-        ptrace::step(tracee_pid, None)?;
-
-        // ...then, after we've stepped the program, we fill in the data
-        // associated with each Write hint in stage 2.
-        tracee_hints_stage2(tracee_pid, &mut hints)?;
-
-        match wait::waitpid(tracee_pid, None)? {
-            wait::WaitStatus::Exited(_, status) => {
-                log::debug!("exited with {}", status);
-                break;
-            }
-            wait::WaitStatus::Signaled(_, _, _) => {
-                log::debug!("signaled");
-            }
-            wait::WaitStatus::Stopped(_, signal) => {
-                log::debug!("stopped with {:?}", signal);
-            }
-            wait::WaitStatus::StillAlive => {
-                log::debug!("still alive");
-            }
-            s => {
-                log::debug!("{:?}", s);
-                break;
-            }
-        }
-
-        traces.push(Trace {
-            instr: instr_bytes[0..instr.len()].to_vec(),
-            regs: regs,
-            hints: hints,
-        })
-    }
-
-    Ok(traces)
-}
-
-fn tracee_regs(pid: Pid) -> Result<RegisterFile> {
-    let user_regs = ptrace::getregs(pid)?;
-
-    Ok(RegisterFile {
-        rax: user_regs.rax,
-        rbx: user_regs.rbx,
-        rcx: user_regs.rcx,
-        rdx: user_regs.rdx,
-        rsi: user_regs.rsi,
-        rdi: user_regs.rdi,
-        rsp: user_regs.rsp,
-        rbp: user_regs.rbp,
-        r8: user_regs.r8,
-        r9: user_regs.r9,
-        r10: user_regs.r10,
-        r11: user_regs.r11,
-        r12: user_regs.r12,
-        r13: user_regs.r13,
-        r14: user_regs.r14,
-        r15: user_regs.r15,
-        rip: user_regs.rip,
-        rflags: user_regs.eflags,
-    })
-}
-
-fn tracee_instr(
-    config: &TraceConfig,
-    pid: Pid,
-    regs: &RegisterFile,
-) -> Result<(Instruction, Vec<u8>)> {
-    let mut bytes = vec![0u8; MAX_INSTR_LEN];
-    let remote_iov = uio::RemoteIoVec {
-        base: regs.rip as usize,
-        len: MAX_INSTR_LEN,
-    };
-
-    // TODO(ww): Check the length here.
-    uio::process_vm_readv(
-        pid,
-        &[uio::IoVec::from_mut_slice(&mut bytes)],
-        &[remote_iov],
-    )?;
-
-    log::debug!("fetched instruction bytes: {:?}", bytes);
-
-    let mut decoder = Decoder::new(config.bitness, &bytes, DecoderOptions::NONE);
-    decoder.set_ip(regs.rip);
-
-    let instr = decoder.decode();
-    log::debug!("instr: {:?}", instr.code());
-
-    match instr.code() {
-        Code::INVALID => Err(anyhow!("invalid instruction")),
-        _ => Ok((instr, bytes)),
-    }
-}
-
-fn tracee_data(pid: Pid, addr: u64, mask: MemoryMask) -> Result<u64> {
-    log::debug!("attempting to read tracee @ 0x{:x} ({:?})", addr, mask);
-
-    // NOTE(ww): Could probably use ptrace::read() here since we're always <= 64 bits,
-    // but I find process_vm_readv a little more readable.
-    let mut bytes = vec![0u8; mask as usize];
-    let remote_iov = uio::RemoteIoVec {
-        base: addr as usize,
-        len: mask as usize,
-    };
-
-    uio::process_vm_readv(
-        pid,
-        &[uio::IoVec::from_mut_slice(&mut bytes)],
-        &[remote_iov],
-    )?;
-
-    log::debug!("fetched data bytes: {:?}", bytes);
-
-    Ok(match mask {
-        MemoryMask::Byte => bytes[0] as u64,
-        MemoryMask::Word => u16::from_le_bytes(bytes.as_slice().try_into()?) as u64,
-        MemoryMask::DWord => u32::from_le_bytes(bytes.as_slice().try_into()?) as u64,
-        MemoryMask::QWord => u64::from_le_bytes(bytes.as_slice().try_into()?) as u64,
-    })
-}
-
-fn tracee_hints_stage1(
-    config: &TraceConfig,
-    pid: Pid,
-    instr: &Instruction,
-    regs: &RegisterFile,
-) -> Result<Vec<MemoryHint>> {
-    log::debug!("memory hints stage 1");
-    let mut hints = vec![];
-
-    // TODO(ww): Memory waste.
-    let info = {
-        let mut info_factory = InstructionInfoFactory::new();
-        info_factory
-            .info_options(&instr, InstructionInfoOptions::NO_REGISTER_USAGE)
-            .clone()
-    };
-
-    for used_mem in info.used_memory() {
-        // We model writebacks as two separate memory ops, so split them up here.
-        let ops: &[MemoryOp] = match used_mem.access() {
-            OpAccess::Read => &[MemoryOp::Read],
-            OpAccess::Write => &[MemoryOp::Write],
-            OpAccess::ReadWrite => &[MemoryOp::Read, MemoryOp::Write],
-            op => return Err(anyhow!("unsupported memop: {:?}", op)),
-        };
-
-        let mask = match used_mem.memory_size() {
-            MemorySize::UInt8 | MemorySize::Int8 => MemoryMask::Byte,
-            MemorySize::UInt16 | MemorySize::Int16 => MemoryMask::Word,
-            MemorySize::UInt32 | MemorySize::Int32 => MemoryMask::DWord,
-            MemorySize::UInt64 | MemorySize::Int64 => MemoryMask::QWord,
-            size => return Err(anyhow!("unsupported memsize: {:?}", size)),
-        };
-
-        let addr = match config.bitness {
-            32 => regs.effective_address32(&instr, &used_mem)?,
-            64 => regs.effective_address64(&instr, &used_mem)?,
-            _ => unreachable!(),
-        };
-
-        log::debug!("effective virtual addr: {:x}", addr);
-
-        for op in ops {
-            let data = match op {
-                MemoryOp::Read => tracee_data(pid, addr, mask)?,
-                MemoryOp::Write => 0,
-            };
-
-            hints.push(MemoryHint {
-                address: addr,
-                operation: *op,
-                mask: mask,
-                data: data,
-            });
-        }
-
-        log::debug!("{:?}", used_mem);
-    }
-
-    Ok(hints)
-}
-
-fn tracee_hints_stage2(pid: Pid, hints: &mut Vec<MemoryHint>) -> Result<()> {
-    log::debug!("memory hints stage 2");
-
-    for hint in hints.iter_mut() {
-        if hint.operation != MemoryOp::Write {
-            continue;
-        }
-
-        let data = tracee_data(pid, hint.address, hint.mask)?;
-        hint.data = data;
-    }
-
-    Ok(())
 }
