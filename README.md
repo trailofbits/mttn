@@ -3,7 +3,7 @@ mttn
 
 *memory tracer, take N*
 
-[![Build Status](https://github.com/trailofbits/mttn/workflows/ci/badge.svg)](https://github.com/trailofbits/mttn/actions?query=workflow%3ACI)
+[![Build Status](https://github.com/trailofbits/mttn/workflows/CI/badge.svg)](https://github.com/trailofbits/mttn/actions?query=workflow%3ACI)
 
 ---
 
