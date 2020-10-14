@@ -279,6 +279,7 @@ impl Tracer {
                 }
             }
 
+            #[allow(clippy::redundant_field_names)]
             traces.push(Trace {
                 instr: instr_bytes[0..instr.len()].to_vec(),
                 regs: self.register_file,
@@ -393,6 +394,7 @@ impl Tracer {
                     MemoryOp::Write => 0,
                 };
 
+                #[allow(clippy::redundant_field_names)]
                 hints.push(MemoryHint {
                     address: addr,
                     operation: *op,
