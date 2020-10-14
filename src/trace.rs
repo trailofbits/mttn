@@ -215,8 +215,8 @@ impl From<clap::ArgMatches<'_>> for Tracer {
             tracee: matches.value_of("tracee").unwrap().into(),
             tracee_args: matches
                 .values_of("tracee-args")
-                .and_then(|v| Some(v.map(|a| a.to_string()).collect()))
-                .unwrap_or_else(|| vec![]),
+                .map(|v| v.map(|a| a.to_string()).collect())
+                .unwrap_or_else(Vec::new),
             register_file: Default::default(),
         }
     }
