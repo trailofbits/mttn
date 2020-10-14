@@ -32,7 +32,7 @@ fn app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn run() -> Result<()> {
-    let tracer = trace::Tracer::from(app().get_matches());
+    let mut tracer = trace::Tracer::from(app().get_matches());
 
     let traces = tracer.trace()?;
     serde_json::to_writer(std::io::stdout(), &traces)?;

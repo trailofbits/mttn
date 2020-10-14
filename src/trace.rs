@@ -7,6 +7,7 @@ use nix::sys::ptrace;
 use nix::sys::uio;
 use nix::sys::wait;
 use nix::unistd::Pid;
+use num::traits::{AsPrimitive, WrappingAdd, WrappingMul};
 use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
@@ -15,7 +16,7 @@ use std::process::Command;
 
 const MAX_INSTR_LEN: usize = 15;
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize)]
 pub enum MemoryMask {
     Byte = 1,
     Word = 2,
@@ -23,7 +24,7 @@ pub enum MemoryMask {
     QWord = 8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum MemoryOp {
     Read,
     Write,
@@ -44,7 +45,7 @@ pub struct Trace {
     hints: Vec<MemoryHint>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct RegisterFile {
     rax: u64,
     rbx: u64,
@@ -150,44 +151,52 @@ impl RegisterFile {
         }
     }
 
-    // TODO(ww): This and below should be `fn effective_address<T: Bitness>`
-    fn effective_address32(&self, mem: &UsedMemory) -> Result<u64> {
+    fn effective_address<T>(&self, mem: &UsedMemory) -> Result<u64>
+    where
+        T: Copy + WrappingAdd + WrappingMul + Into<u64> + 'static,
+        u32: AsPrimitive<T>,
+        u64: AsPrimitive<T>,
+    {
         let base = match mem.base() {
-            Register::None => 0,
-            reg => self.value(reg)? as u32,
+            Register::None => 0u64.as_(),
+            reg => self.value(reg)?.as_(),
         };
 
         let index = match mem.index() {
-            Register::None => 0,
-            reg => self.value(reg)? as u32,
+            Register::None => 0u64.as_(),
+            reg => self.value(reg)?.as_(),
         };
 
         let effective = base
-            .wrapping_add(index.wrapping_mul(mem.scale() as u32))
-            .wrapping_add(mem.displacement() as u32) as u32;
+            .wrapping_add(&index.wrapping_mul(&mem.scale().as_()))
+            .wrapping_add(&mem.displacement().as_());
 
-        Ok(effective as u64)
+        Ok(effective.into())
     }
+}
 
-    fn effective_address64(&self, mem: &UsedMemory) -> Result<u64> {
-        // NOTE(ww): We assume a flat memory model. Otherwise, we'd need to
-        // handle the segment base address here as well.
-
-        let base = match mem.base() {
-            Register::None => 0,
-            reg => self.value(reg)?,
-        };
-
-        let index = match mem.index() {
-            Register::None => 0,
-            reg => self.value(reg)?,
-        };
-
-        let effective = base
-            .wrapping_add(index.wrapping_mul(mem.scale() as u64))
-            .wrapping_add(mem.displacement());
-
-        Ok(effective)
+impl From<libc::user_regs_struct> for RegisterFile {
+    fn from(user_regs: libc::user_regs_struct) -> Self {
+        Self {
+            rax: user_regs.rax,
+            rbx: user_regs.rbx,
+            rcx: user_regs.rcx,
+            rdx: user_regs.rdx,
+            rsi: user_regs.rsi,
+            rdi: user_regs.rdi,
+            rsp: user_regs.rsp,
+            rbp: user_regs.rbp,
+            r8: user_regs.r8,
+            r9: user_regs.r9,
+            r10: user_regs.r10,
+            r11: user_regs.r11,
+            r12: user_regs.r12,
+            r13: user_regs.r13,
+            r14: user_regs.r14,
+            r15: user_regs.r15,
+            rip: user_regs.rip,
+            rflags: user_regs.eflags,
+        }
     }
 }
 
@@ -196,6 +205,7 @@ pub struct Tracer {
     pub bitness: u32,
     pub tracee: String,
     pub tracee_args: Vec<String>,
+    pub register_file: RegisterFile,
 }
 
 impl From<clap::ArgMatches<'_>> for Tracer {
@@ -207,12 +217,13 @@ impl From<clap::ArgMatches<'_>> for Tracer {
                 .values_of("tracee-args")
                 .and_then(|v| Some(v.map(|a| a.to_string()).collect()))
                 .unwrap_or_else(|| vec![]),
+            register_file: Default::default(),
         }
     }
 }
 
 impl Tracer {
-    pub fn trace(&self) -> Result<Vec<Trace>> {
+    pub fn trace(&mut self) -> Result<Vec<Trace>> {
         let tracee_pid = {
             let child = Command::new(&self.tracee)
                 .args(&self.tracee_args)
@@ -234,12 +245,12 @@ impl Tracer {
         // Time to start the show.
         let mut traces = vec![];
         loop {
-            let regs = self.tracee_regs(tracee_pid)?;
-            let (instr, instr_bytes) = self.tracee_instr(tracee_pid, &regs)?;
+            self.tracee_regs(tracee_pid)?;
+            let (instr, instr_bytes) = self.tracee_instr(tracee_pid)?;
 
             // Hints are generated in two phases: we build a complete list of
             // expected hints (including all Read hints) in stage 1...
-            let mut hints = self.tracee_hints_stage1(tracee_pid, &instr, &regs)?;
+            let mut hints = self.tracee_hints_stage1(tracee_pid, &instr)?;
 
             log::debug!("step!");
             ptrace::step(tracee_pid, None)?;
@@ -270,7 +281,7 @@ impl Tracer {
 
             traces.push(Trace {
                 instr: instr_bytes[0..instr.len()].to_vec(),
-                regs: regs,
+                regs: self.register_file,
                 hints: hints,
             })
         }
@@ -278,35 +289,16 @@ impl Tracer {
         Ok(traces)
     }
 
-    fn tracee_regs(&self, pid: Pid) -> Result<RegisterFile> {
-        let user_regs = ptrace::getregs(pid)?;
+    fn tracee_regs(&mut self, pid: Pid) -> Result<()> {
+        self.register_file = RegisterFile::from(ptrace::getregs(pid)?);
 
-        Ok(RegisterFile {
-            rax: user_regs.rax,
-            rbx: user_regs.rbx,
-            rcx: user_regs.rcx,
-            rdx: user_regs.rdx,
-            rsi: user_regs.rsi,
-            rdi: user_regs.rdi,
-            rsp: user_regs.rsp,
-            rbp: user_regs.rbp,
-            r8: user_regs.r8,
-            r9: user_regs.r9,
-            r10: user_regs.r10,
-            r11: user_regs.r11,
-            r12: user_regs.r12,
-            r13: user_regs.r13,
-            r14: user_regs.r14,
-            r15: user_regs.r15,
-            rip: user_regs.rip,
-            rflags: user_regs.eflags,
-        })
+        Ok(())
     }
 
-    fn tracee_instr(&self, pid: Pid, regs: &RegisterFile) -> Result<(Instruction, Vec<u8>)> {
+    fn tracee_instr(&self, pid: Pid) -> Result<(Instruction, Vec<u8>)> {
         let mut bytes = vec![0u8; MAX_INSTR_LEN];
         let remote_iov = uio::RemoteIoVec {
-            base: regs.rip as usize,
+            base: self.register_file.rip as usize,
             len: MAX_INSTR_LEN,
         };
 
@@ -320,7 +312,7 @@ impl Tracer {
         log::debug!("fetched instruction bytes: {:?}", bytes);
 
         let mut decoder = Decoder::new(self.bitness, &bytes, DecoderOptions::NONE);
-        decoder.set_ip(regs.rip);
+        decoder.set_ip(self.register_file.rip);
 
         let instr = decoder.decode();
         log::debug!("instr: {:?}", instr.code());
@@ -358,12 +350,7 @@ impl Tracer {
         })
     }
 
-    fn tracee_hints_stage1(
-        &self,
-        pid: Pid,
-        instr: &Instruction,
-        regs: &RegisterFile,
-    ) -> Result<Vec<MemoryHint>> {
+    fn tracee_hints_stage1(&self, pid: Pid, instr: &Instruction) -> Result<Vec<MemoryHint>> {
         log::debug!("memory hints stage 1");
         let mut hints = vec![];
 
@@ -393,8 +380,8 @@ impl Tracer {
             };
 
             let addr = match self.bitness {
-                32 => regs.effective_address32(&used_mem)?,
-                64 => regs.effective_address64(&used_mem)?,
+                32 => self.register_file.effective_address::<u32>(&used_mem)?,
+                64 => self.register_file.effective_address::<u64>(&used_mem)?,
                 _ => unreachable!(),
             };
 
