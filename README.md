@@ -3,6 +3,8 @@ mttn
 
 *memory tracer, take N*
 
+[![Build Status](https://github.com/trailofbits/mttn/workflows/ci/badge.svg)](https://github.com/trailofbits/mttn/actions?query=workflow%3ACI)
+
 ---
 
 `mttn` is a small, very slow program tracer with a few specific goals:
