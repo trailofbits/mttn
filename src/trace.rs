@@ -437,7 +437,7 @@ mod tests {
         }
     }
 
-    fn dummy_usedmemory() -> UsedMemory {
+    fn dummy_usedmemory32() -> UsedMemory {
         // CS:[EAX + (EDI * 4) + 100]
         UsedMemory::new(
             Register::CS,  /* segment */
@@ -445,6 +445,19 @@ mod tests {
             Register::EDI, /* index */
             4,             /* scale */
             100,           /* displacement */
+            MemorySize::UInt32,
+            OpAccess::Read,
+        )
+    }
+
+    fn dummy_usedmemory64() -> UsedMemory {
+        // CS:[RAX + (RDI * 8) + 64]
+        UsedMemory::new(
+            Register::CS,  /* segment */
+            Register::RAX, /* base */
+            Register::RDI, /* index */
+            8,             /* scale */
+            64,            /* displacement */
             MemorySize::UInt32,
             OpAccess::Read,
         )
@@ -468,14 +481,27 @@ mod tests {
     #[test]
     fn test_register_file_effective_address() {
         let regs = dummy_regs();
-        let used_memory = dummy_usedmemory();
 
-        let effective = regs.effective_address::<u32>(&used_memory).unwrap();
-        let effective_exp: u64 = (regs.rax as u32)
-            .wrapping_add((regs.rdi as u32).wrapping_mul(used_memory.scale()))
-            .wrapping_add(used_memory.displacement() as u32)
-            .into();
+        {
+            let used_memory = dummy_usedmemory32();
+            let effective = regs.effective_address::<u32>(&used_memory).unwrap();
+            let effective_exp: u64 = (regs.rax as u32)
+                .wrapping_add((regs.rdi as u32).wrapping_mul(used_memory.scale()))
+                .wrapping_add(used_memory.displacement() as u32)
+                .into();
 
-        assert_eq!(effective, effective_exp);
+            assert_eq!(effective, effective_exp);
+        }
+
+        {
+            let used_memory = dummy_usedmemory64();
+            let effective = regs.effective_address::<u64>(&used_memory).unwrap();
+            let effective_exp = regs
+                .rax
+                .wrapping_add(regs.rdi.wrapping_mul(used_memory.scale().into()))
+                .wrapping_add(used_memory.displacement());
+
+            assert_eq!(effective, effective_exp);
+        }
     }
 }
