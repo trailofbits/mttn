@@ -1,9 +1,10 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use iced_x86::{
     Code, Decoder, DecoderOptions, Instruction, InstructionInfoFactory, InstructionInfoOptions,
     MemorySize, OpAccess, Register, UsedMemory,
 };
 use nix::sys::ptrace;
+use nix::sys::signal;
 use nix::sys::uio;
 use nix::sys::wait;
 use nix::unistd::Pid;
@@ -130,7 +131,7 @@ impl RegisterFile {
             Register::RBX => Ok(self.rbx),
             Register::RCX => Ok(self.rcx),
             Register::RDX => Ok(self.rdx),
-            Register::RSI => Ok(self.rsp),
+            Register::RSI => Ok(self.rsi),
             Register::RDI => Ok(self.rdi),
             Register::RSP => Ok(self.rsp),
             Register::RBP => Ok(self.rbp),
@@ -202,6 +203,8 @@ impl From<libc::user_regs_struct> for RegisterFile {
 
 #[derive(Debug)]
 pub struct Tracer {
+    pub ignore_unsupported_memops: bool,
+    pub debug_on_fault: bool,
     pub bitness: u32,
     pub tracee: String,
     pub tracee_args: Vec<String>,
@@ -211,6 +214,8 @@ pub struct Tracer {
 impl From<clap::ArgMatches<'_>> for Tracer {
     fn from(matches: clap::ArgMatches) -> Self {
         Self {
+            ignore_unsupported_memops: matches.is_present("ignore-unsupported-memops"),
+            debug_on_fault: matches.is_present("debug-on-fault"),
             bitness: matches.value_of("mode").unwrap().parse().unwrap(),
             tracee: matches.value_of("tracee").unwrap().into(),
             tracee_args: matches
@@ -335,13 +340,23 @@ impl Tracer {
             len: mask as usize,
         };
 
-        uio::process_vm_readv(
+        // NOTE(ww): A failure here indicates a bug in the tracer, not the tracee.
+        // In particular it indicates that we either (1) calculated the effective
+        // address incorrectly, or (2) calculated the mask incorrectly.
+        if let Err(e) = uio::process_vm_readv(
             pid,
             &[uio::IoVec::from_mut_slice(&mut bytes)],
             &[remote_iov],
-        )?;
+        ) {
+            if self.debug_on_fault {
+                log::error!("Suspending the tracee ({}), detaching and exiting", pid);
+                ptrace::detach(pid, Some(signal::Signal::SIGSTOP))?;
+            }
 
-        log::debug!("fetched data bytes: {:?}", bytes);
+            return Err(e).with_context(|| format!("Fault: size: {:?}, address: {:x}", mask, addr));
+        } else {
+            log::debug!("fetched data bytes: {:?}", bytes);
+        }
 
         Ok(match mask {
             MemoryMask::Byte => bytes[0] as u64,
@@ -377,7 +392,17 @@ impl Tracer {
                 MemorySize::UInt16 | MemorySize::Int16 => MemoryMask::Word,
                 MemorySize::UInt32 | MemorySize::Int32 => MemoryMask::DWord,
                 MemorySize::UInt64 | MemorySize::Int64 => MemoryMask::QWord,
-                size => return Err(anyhow!("unsupported memsize: {:?}", size)),
+                size => {
+                    if self.ignore_unsupported_memops {
+                        log::warn!(
+                            "unsupported memop size: {:?}: not generating a memory hint",
+                            size
+                        );
+                        continue;
+                    } else {
+                        return Err(anyhow!("unsupported memsize: {:?}", size));
+                    }
+                }
             };
 
             let addr = match self.bitness {

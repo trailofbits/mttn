@@ -19,6 +19,18 @@ fn app<'a, 'b>() -> App<'a, 'b> {
                 .default_value("64"),
         )
         .arg(
+            Arg::with_name("ignore-unsupported-memops")
+                .help("Ignore unsupported memory ops instead of failing")
+                .short("I")
+                .long("ignore-unsupported-memops"),
+        )
+        .arg(
+            Arg::with_name("debug-on-fault")
+                .help("Suspend the tracee and detach if a memory access faults")
+                .short("d")
+                .long("debug-on-fault"),
+        )
+        .arg(
             Arg::with_name("tracee")
                 .help("The program to trace")
                 .index(1)
@@ -46,7 +58,7 @@ fn main() {
     process::exit(match run() {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("Fatal: {}", e);
+            eprintln!("Fatal: {:#}", e);
             1
         }
     });
