@@ -424,3 +424,58 @@ impl Tracer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_regs() -> RegisterFile {
+        RegisterFile {
+            rax: 0x9900aabbccddeeff,
+            rdi: 0x00000000feedface,
+            ..Default::default()
+        }
+    }
+
+    fn dummy_usedmemory() -> UsedMemory {
+        // CS:[EAX + (EDI * 4) + 100]
+        UsedMemory::new(
+            Register::CS,  /* segment */
+            Register::EAX, /* base */
+            Register::EDI, /* index */
+            4,             /* scale */
+            100,           /* displacement */
+            MemorySize::UInt32,
+            OpAccess::Read,
+        )
+    }
+
+    #[test]
+    fn test_register_file_value() {
+        let regs = dummy_regs();
+
+        // Addressable registers always return their correctly masked values.
+        assert_eq!(regs.value(Register::AL).unwrap(), 0xff);
+        assert_eq!(regs.value(Register::AH).unwrap(), 0xee);
+        assert_eq!(regs.value(Register::AX).unwrap(), 0xeeff);
+        assert_eq!(regs.value(Register::EAX).unwrap(), 0xccddeeff);
+        assert_eq!(regs.value(Register::RAX).unwrap(), 0x9900aabbccddeeff);
+
+        // Unaddressable and unsupported registers return an Err.
+        assert!(regs.value(Register::SS).is_err());
+    }
+
+    #[test]
+    fn test_register_file_effective_address() {
+        let regs = dummy_regs();
+        let used_memory = dummy_usedmemory();
+
+        let effective = regs.effective_address::<u32>(&used_memory).unwrap();
+        let effective_exp: u64 = (regs.rax as u32)
+            .wrapping_add((regs.rdi as u32).wrapping_mul(used_memory.scale()))
+            .wrapping_add(used_memory.displacement() as u32)
+            .into();
+
+        assert_eq!(effective, effective_exp);
+    }
+}
