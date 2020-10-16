@@ -17,6 +17,11 @@ use std::process::Command;
 
 const MAX_INSTR_LEN: usize = 15;
 
+/// Represents the width of a concrete memory operation.
+///
+/// All `mttn` memory operations are 1, 2, 4, or 8 bytes.
+/// Larger operations are either modeled as multiple individual operations
+/// (if caused by a `REP` prefix), ignored (if configured), or cause a fatal error.
 #[derive(Clone, Copy, Debug, Serialize)]
 pub enum MemoryMask {
     Byte = 1,
@@ -25,12 +30,20 @@ pub enum MemoryMask {
     QWord = 8,
 }
 
+/// The access disposition of a concrete memory operation.
+///
+/// All `mttn` operations are either `Read` or `Write`. Instructions that
+/// perform a read-and-update are modeled with two separate operations.
+/// Instructions that perform conditional reads or writes are modeled only
+/// if the conditional memory operation actually took place during the trace.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum MemoryOp {
     Read,
     Write,
 }
 
+/// Represents an entire traced memory operation, including its kind (`MemoryOp`),
+/// size (`MemoryMask`), concrete address, and actual read or written data.
 #[derive(Debug, Serialize)]
 pub struct MemoryHint {
     address: u64,
@@ -39,6 +52,9 @@ pub struct MemoryHint {
     data: u64,
 }
 
+/// Represents an individual step in the trace, including the raw instruction bytes,
+/// the register file state before execution, and any memory operations that result
+/// from execution.
 #[derive(Debug, Serialize)]
 pub struct Step {
     instr: Vec<u8>,
@@ -46,6 +62,11 @@ pub struct Step {
     hints: Vec<MemoryHint>,
 }
 
+/// Represents the (usermode) register file.
+///
+/// Only the standard addressable registers, plus `RFLAGS`, are tracked.
+/// `mttn` assumes that all segment base addresses are `0` and therefore doesn't
+/// track them.
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct RegisterFile {
     rax: u64,
@@ -69,6 +90,10 @@ pub struct RegisterFile {
 }
 
 impl RegisterFile {
+    /// Given a symbolic iced-x86 register, concretize it against the register file.
+    /// Narrows the result, as appropriate.
+    ///
+    /// Untracked registers result in an `Err` result.
     fn value(&self, reg: Register) -> Result<u64> {
         match reg {
             // 8 bit regs.
@@ -152,6 +177,8 @@ impl RegisterFile {
         }
     }
 
+    /// Given a computed `UsedMemory` for an instruction, compute the effective address associated
+    /// with the memory access.
     fn effective_address<T>(&self, mem: &UsedMemory) -> Result<u64>
     where
         T: Copy + WrappingAdd + WrappingMul + Into<u64> + 'static,
@@ -201,6 +228,9 @@ impl From<libc::user_regs_struct> for RegisterFile {
     }
 }
 
+/// Represents an actively traced program, in some indeterminate state.
+///
+/// Tracees are associated with their parent `Tracer`.
 pub struct Tracee<'a> {
     terminated: bool,
     tracee_pid: Pid,
@@ -209,6 +239,8 @@ pub struct Tracee<'a> {
 }
 
 impl<'a> Tracee<'a> {
+    /// Create a new `Tracee` from the given PID (presumably spawned with `PTRACE_TRACEME`)
+    /// and `Tracer`.
     fn new(tracee_pid: Pid, tracer: &'a Tracer) -> Self {
         #[allow(clippy::redundant_field_names)]
         Self {
@@ -219,6 +251,8 @@ impl<'a> Tracee<'a> {
         }
     }
 
+    /// Step the tracee forwards by one instruction, returning the trace `Step` or
+    /// an `Err` if an internal tracing step fails.
     fn step(&mut self) -> Result<Step> {
         self.tracee_regs()?;
         let (instr, instr_bytes) = self.tracee_instr()?;
@@ -261,12 +295,15 @@ impl<'a> Tracee<'a> {
         })
     }
 
+    /// Loads the our register file from the tracee's user register state.
     fn tracee_regs(&mut self) -> Result<()> {
         self.register_file = RegisterFile::from(ptrace::getregs(self.tracee_pid)?);
 
         Ok(())
     }
 
+    /// Returns the iced-x86 `Instruction` and raw instruction bytes at the tracee's
+    /// current instruction pointer.
     fn tracee_instr(&self) -> Result<(Instruction, Vec<u8>)> {
         let mut bytes = vec![0u8; MAX_INSTR_LEN];
         let remote_iov = uio::RemoteIoVec {
@@ -295,6 +332,7 @@ impl<'a> Tracee<'a> {
         }
     }
 
+    /// Reads a piece of the tracee's memory, starting at `addr`.
     fn tracee_data(&self, addr: u64, mask: MemoryMask) -> Result<u64> {
         log::debug!("attempting to read tracee @ 0x{:x} ({:?})", addr, mask);
 
@@ -476,14 +514,6 @@ impl Tracer {
         ptrace::setoptions(tracee_pid, ptrace::Options::PTRACE_O_TRACEEXIT)?;
 
         Ok(Tracee::new(tracee_pid, &self))
-
-        // // Time to start the show.
-        // let mut traces = vec![];
-        // loop {
-
-        // }
-
-        // Ok(traces)
     }
 }
 
