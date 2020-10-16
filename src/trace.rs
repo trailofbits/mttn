@@ -40,7 +40,7 @@ pub struct MemoryHint {
 }
 
 #[derive(Debug, Serialize)]
-pub struct Trace {
+pub struct Step {
     instr: Vec<u8>,
     regs: RegisterFile,
     hints: Vec<MemoryHint>,
@@ -201,107 +201,72 @@ impl From<libc::user_regs_struct> for RegisterFile {
     }
 }
 
-#[derive(Debug)]
-pub struct Tracer {
-    pub ignore_unsupported_memops: bool,
-    pub debug_on_fault: bool,
-    pub bitness: u32,
-    pub tracee: String,
-    pub tracee_args: Vec<String>,
-    pub register_file: RegisterFile,
+pub struct Trace<'a> {
+    terminated: bool,
+    tracee_pid: Pid,
+    tracer: &'a Tracer,
+    register_file: RegisterFile,
 }
 
-impl From<clap::ArgMatches<'_>> for Tracer {
-    fn from(matches: clap::ArgMatches) -> Self {
+impl<'a> Trace<'a> {
+    fn new(tracee_pid: Pid, tracer: &'a Tracer) -> Self {
         Self {
-            ignore_unsupported_memops: matches.is_present("ignore-unsupported-memops"),
-            debug_on_fault: matches.is_present("debug-on-fault"),
-            bitness: matches.value_of("mode").unwrap().parse().unwrap(),
-            tracee: matches.value_of("tracee").unwrap().into(),
-            tracee_args: matches
-                .values_of("tracee-args")
-                .map(|v| v.map(|a| a.to_string()).collect())
-                .unwrap_or_else(Vec::new),
+            terminated: false,
+            tracee_pid: tracee_pid,
+            tracer: &tracer,
             register_file: Default::default(),
         }
     }
-}
 
-impl Tracer {
-    pub fn trace(&mut self) -> Result<Vec<Trace>> {
-        let tracee_pid = {
-            let child = Command::new(&self.tracee)
-                .args(&self.tracee_args)
-                .spawn_ptrace()?;
-            Pid::from_raw(child.id() as i32)
-        };
+    fn step(&mut self) -> Result<Step> {
+        self.tracee_regs()?;
+        let (instr, instr_bytes) = self.tracee_instr()?;
 
-        log::debug!(
-            "spawned {} for tracing as child {}",
-            self.tracee,
-            tracee_pid
-        );
+        // Hints are generated in two phases: we build a complete list of
+        // expected hints (including all Read hints) in stage 1...
+        let mut hints = self.tracee_hints_stage1(&instr)?;
 
-        // Our tracee is now live and ready to be traced, but in a stopped state.
-        // We set PTRACE_O_TRACEEXIT on it to make sure it stops right before
-        // finally exiting, giving us one last chance to do some inspection.
-        ptrace::setoptions(tracee_pid, ptrace::Options::PTRACE_O_TRACEEXIT)?;
+        ptrace::step(self.tracee_pid, None)?;
 
-        // Time to start the show.
-        let mut traces = vec![];
-        loop {
-            self.tracee_regs(tracee_pid)?;
-            let (instr, instr_bytes) = self.tracee_instr(tracee_pid)?;
+        // ...then, after we've stepped the program, we fill in the data
+        // associated with each Write hint in stage 2.
+        self.tracee_hints_stage2(&mut hints)?;
 
-            // Hints are generated in two phases: we build a complete list of
-            // expected hints (including all Read hints) in stage 1...
-            let mut hints = self.tracee_hints_stage1(tracee_pid, &instr)?;
-
-            log::debug!("step!");
-            ptrace::step(tracee_pid, None)?;
-
-            // ...then, after we've stepped the program, we fill in the data
-            // associated with each Write hint in stage 2.
-            self.tracee_hints_stage2(tracee_pid, &mut hints)?;
-
-            match wait::waitpid(tracee_pid, None)? {
-                wait::WaitStatus::Exited(_, status) => {
-                    log::debug!("exited with {}", status);
-                    break;
-                }
-                wait::WaitStatus::Signaled(_, _, _) => {
-                    log::debug!("signaled");
-                }
-                wait::WaitStatus::Stopped(_, signal) => {
-                    log::debug!("stopped with {:?}", signal);
-                }
-                wait::WaitStatus::StillAlive => {
-                    log::debug!("still alive");
-                }
-                s => {
-                    log::debug!("{:?}", s);
-                    break;
-                }
+        match wait::waitpid(self.tracee_pid, None)? {
+            wait::WaitStatus::Exited(_, status) => {
+                log::debug!("exited with {}", status);
+                self.terminated = true;
             }
-
-            #[allow(clippy::redundant_field_names)]
-            traces.push(Trace {
-                instr: instr_bytes[0..instr.len()].to_vec(),
-                regs: self.register_file,
-                hints: hints,
-            })
+            wait::WaitStatus::Signaled(_, _, _) => {
+                log::debug!("signaled");
+            }
+            wait::WaitStatus::Stopped(_, signal) => {
+                log::debug!("stopped with {:?}", signal);
+            }
+            wait::WaitStatus::StillAlive => {
+                log::debug!("still alive");
+            }
+            s => {
+                log::debug!("{:?}", s);
+                self.terminated = true;
+            }
         }
 
-        Ok(traces)
+        #[allow(clippy::redundant_field_names)]
+        Ok(Step {
+            instr: instr_bytes[0..instr.len()].to_vec(),
+            regs: self.register_file,
+            hints: hints,
+        })
     }
 
-    fn tracee_regs(&mut self, pid: Pid) -> Result<()> {
-        self.register_file = RegisterFile::from(ptrace::getregs(pid)?);
+    fn tracee_regs(&mut self) -> Result<()> {
+        self.register_file = RegisterFile::from(ptrace::getregs(self.tracee_pid)?);
 
         Ok(())
     }
 
-    fn tracee_instr(&self, pid: Pid) -> Result<(Instruction, Vec<u8>)> {
+    fn tracee_instr(&self) -> Result<(Instruction, Vec<u8>)> {
         let mut bytes = vec![0u8; MAX_INSTR_LEN];
         let remote_iov = uio::RemoteIoVec {
             base: self.register_file.rip as usize,
@@ -310,14 +275,14 @@ impl Tracer {
 
         // TODO(ww): Check the length here.
         uio::process_vm_readv(
-            pid,
+            self.tracee_pid,
             &[uio::IoVec::from_mut_slice(&mut bytes)],
             &[remote_iov],
         )?;
 
         log::debug!("fetched instruction bytes: {:?}", bytes);
 
-        let mut decoder = Decoder::new(self.bitness, &bytes, DecoderOptions::NONE);
+        let mut decoder = Decoder::new(self.tracer.bitness, &bytes, DecoderOptions::NONE);
         decoder.set_ip(self.register_file.rip);
 
         let instr = decoder.decode();
@@ -329,7 +294,7 @@ impl Tracer {
         }
     }
 
-    fn tracee_data(&self, pid: Pid, addr: u64, mask: MemoryMask) -> Result<u64> {
+    fn tracee_data(&self, addr: u64, mask: MemoryMask) -> Result<u64> {
         log::debug!("attempting to read tracee @ 0x{:x} ({:?})", addr, mask);
 
         // NOTE(ww): Could probably use ptrace::read() here since we're always <= 64 bits,
@@ -344,13 +309,16 @@ impl Tracer {
         // In particular it indicates that we either (1) calculated the effective
         // address incorrectly, or (2) calculated the mask incorrectly.
         if let Err(e) = uio::process_vm_readv(
-            pid,
+            self.tracee_pid,
             &[uio::IoVec::from_mut_slice(&mut bytes)],
             &[remote_iov],
         ) {
-            if self.debug_on_fault {
-                log::error!("Suspending the tracee ({}), detaching and exiting", pid);
-                ptrace::detach(pid, Some(signal::Signal::SIGSTOP))?;
+            if self.tracer.debug_on_fault {
+                log::error!(
+                    "Suspending the tracee ({}), detaching and exiting",
+                    self.tracee_pid
+                );
+                ptrace::detach(self.tracee_pid, Some(signal::Signal::SIGSTOP))?;
             }
 
             return Err(e).with_context(|| format!("Fault: size: {:?}, address: {:x}", mask, addr));
@@ -366,7 +334,7 @@ impl Tracer {
         })
     }
 
-    fn tracee_hints_stage1(&self, pid: Pid, instr: &Instruction) -> Result<Vec<MemoryHint>> {
+    fn tracee_hints_stage1(&self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
         log::debug!("memory hints stage 1");
         let mut hints = vec![];
 
@@ -393,7 +361,7 @@ impl Tracer {
                 MemorySize::UInt32 | MemorySize::Int32 => MemoryMask::DWord,
                 MemorySize::UInt64 | MemorySize::Int64 => MemoryMask::QWord,
                 size => {
-                    if self.ignore_unsupported_memops {
+                    if self.tracer.ignore_unsupported_memops {
                         log::warn!(
                             "unsupported memop size: {:?}: not generating a memory hint",
                             size
@@ -405,7 +373,7 @@ impl Tracer {
                 }
             };
 
-            let addr = match self.bitness {
+            let addr = match self.tracer.bitness {
                 32 => self.register_file.effective_address::<u32>(&used_mem)?,
                 64 => self.register_file.effective_address::<u64>(&used_mem)?,
                 _ => unreachable!(),
@@ -415,7 +383,7 @@ impl Tracer {
 
             for op in ops {
                 let data = match op {
-                    MemoryOp::Read => self.tracee_data(pid, addr, mask)?,
+                    MemoryOp::Read => self.tracee_data(addr, mask)?,
                     MemoryOp::Write => 0,
                 };
 
@@ -434,7 +402,7 @@ impl Tracer {
         Ok(hints)
     }
 
-    fn tracee_hints_stage2(&self, pid: Pid, hints: &mut Vec<MemoryHint>) -> Result<()> {
+    fn tracee_hints_stage2(&self, hints: &mut Vec<MemoryHint>) -> Result<()> {
         log::debug!("memory hints stage 2");
 
         for hint in hints.iter_mut() {
@@ -442,11 +410,79 @@ impl Tracer {
                 continue;
             }
 
-            let data = self.tracee_data(pid, hint.address, hint.mask)?;
+            let data = self.tracee_data(hint.address, hint.mask)?;
             hint.data = data;
         }
 
         Ok(())
+    }
+}
+
+impl Iterator for Trace<'_> {
+    type Item = Result<Step>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.terminated {
+            None
+        } else {
+            Some(self.step())
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Tracer {
+    pub ignore_unsupported_memops: bool,
+    pub debug_on_fault: bool,
+    pub bitness: u32,
+    pub tracee: String,
+    pub tracee_args: Vec<String>,
+}
+
+impl From<clap::ArgMatches<'_>> for Tracer {
+    fn from(matches: clap::ArgMatches) -> Self {
+        Self {
+            ignore_unsupported_memops: matches.is_present("ignore-unsupported-memops"),
+            debug_on_fault: matches.is_present("debug-on-fault"),
+            bitness: matches.value_of("mode").unwrap().parse().unwrap(),
+            tracee: matches.value_of("tracee").unwrap().into(),
+            tracee_args: matches
+                .values_of("tracee-args")
+                .map(|v| v.map(|a| a.to_string()).collect())
+                .unwrap_or_else(Vec::new),
+        }
+    }
+}
+
+impl Tracer {
+    pub fn trace(&self) -> Result<Trace> {
+        let tracee_pid = {
+            let child = Command::new(&self.tracee)
+                .args(&self.tracee_args)
+                .spawn_ptrace()?;
+            Pid::from_raw(child.id() as i32)
+        };
+
+        log::debug!(
+            "spawned {} for tracing as child {}",
+            self.tracee,
+            tracee_pid
+        );
+
+        // Our tracee is now live and ready to be traced, but in a stopped state.
+        // We set PTRACE_O_TRACEEXIT on it to make sure it stops right before
+        // finally exiting, giving us one last chance to do some inspection.
+        ptrace::setoptions(tracee_pid, ptrace::Options::PTRACE_O_TRACEEXIT)?;
+
+        Ok(Trace::new(tracee_pid, &self))
+
+        // // Time to start the show.
+        // let mut traces = vec![];
+        // loop {
+
+        // }
+
+        // Ok(traces)
     }
 }
 
