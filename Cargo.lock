@@ -359,8 +359,9 @@ dependencies = [
 
 [[package]]
 name = "spawn-ptrace"
-version = "0.1.2-pre"
-source = "git+https://github.com/luser/spawn-ptrace?rev=760635b#760635b8a50b06fc443fa857356a7aaf1f1e0b0a"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b572503c81aa40e1e61954bca89b863c344e0f310fd51f308d933255bf4f756"
 dependencies = [
  "nix",
 ]

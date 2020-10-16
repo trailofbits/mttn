@@ -15,4 +15,4 @@ nix = "0.18"
 num = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-spawn-ptrace = { git = "https://github.com/luser/spawn-ptrace", rev = "760635b" }
+spawn-ptrace = "0.1.2"
