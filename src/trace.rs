@@ -210,6 +210,7 @@ pub struct Trace<'a> {
 
 impl<'a> Trace<'a> {
     fn new(tracee_pid: Pid, tracer: &'a Tracer) -> Self {
+        #[allow(clippy::redundant_field_names)]
         Self {
             terminated: false,
             tracee_pid: tracee_pid,
