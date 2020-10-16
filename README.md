@@ -10,7 +10,7 @@ mttn
 `mttn` is a small, very slow program tracer with a few specific goals:
 
 * Not modifying the program's instruction stream.
-* Faithfully recording all memory accesses.
+* Faithfully recording most memory accesses.
 * Generating traces that are suitable for SIEVE's Tiny86.
 
 Strong anti-goals:
