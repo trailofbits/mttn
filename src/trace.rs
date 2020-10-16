@@ -201,14 +201,14 @@ impl From<libc::user_regs_struct> for RegisterFile {
     }
 }
 
-pub struct Trace<'a> {
+pub struct Tracee<'a> {
     terminated: bool,
     tracee_pid: Pid,
     tracer: &'a Tracer,
     register_file: RegisterFile,
 }
 
-impl<'a> Trace<'a> {
+impl<'a> Tracee<'a> {
     fn new(tracee_pid: Pid, tracer: &'a Tracer) -> Self {
         #[allow(clippy::redundant_field_names)]
         Self {
@@ -419,7 +419,7 @@ impl<'a> Trace<'a> {
     }
 }
 
-impl Iterator for Trace<'_> {
+impl Iterator for Tracee<'_> {
     type Item = Result<Step>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -456,7 +456,7 @@ impl From<clap::ArgMatches<'_>> for Tracer {
 }
 
 impl Tracer {
-    pub fn trace(&self) -> Result<Trace> {
+    pub fn trace(&self) -> Result<Tracee> {
         let tracee_pid = {
             let child = Command::new(&self.tracee)
                 .args(&self.tracee_args)
@@ -475,7 +475,7 @@ impl Tracer {
         // finally exiting, giving us one last chance to do some inspection.
         ptrace::setoptions(tracee_pid, ptrace::Options::PTRACE_O_TRACEEXIT)?;
 
-        Ok(Trace::new(tracee_pid, &self))
+        Ok(Tracee::new(tracee_pid, &self))
 
         // // Time to start the show.
         // let mut traces = vec![];
