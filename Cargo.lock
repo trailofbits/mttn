@@ -360,7 +360,7 @@ dependencies = [
 [[package]]
 name = "spawn-ptrace"
 version = "0.1.2-pre"
-source = "git+https://github.com/trailofbits/spawn-ptrace?branch=ww/modernize#ce5f150ebebfd70c5cdcd3c3544aaaec53134023"
+source = "git+https://github.com/luser/spawn-ptrace?rev=760635b#760635b8a50b06fc443fa857356a7aaf1f1e0b0a"
 dependencies = [
  "nix",
 ]
