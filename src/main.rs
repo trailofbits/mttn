@@ -44,9 +44,9 @@ fn app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn run() -> Result<()> {
-    let mut tracer = trace::Tracer::from(app().get_matches());
+    let tracer = trace::Tracer::from(app().get_matches());
 
-    let traces = tracer.trace()?;
+    let traces = tracer.trace()?.collect::<Result<Vec<trace::Step>>>()?;
     serde_json::to_writer(std::io::stdout(), &traces)?;
 
     Ok(())
