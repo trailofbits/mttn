@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use iced_x86::{
     Code, Decoder, DecoderOptions, Instruction, InstructionInfoFactory, InstructionInfoOptions,
-    MemorySize, OpAccess, Register, UsedMemory,
+    MemorySize, Mnemonic, OpAccess, Register, UsedMemory,
 };
 use nix::sys::ptrace;
 use nix::sys::signal;
@@ -235,6 +235,7 @@ pub struct Tracee<'a> {
     terminated: bool,
     tracee_pid: Pid,
     tracer: &'a Tracer,
+    info_factory: InstructionInfoFactory,
     register_file: RegisterFile,
 }
 
@@ -247,6 +248,7 @@ impl<'a> Tracee<'a> {
             terminated: false,
             tracee_pid: tracee_pid,
             tracer: &tracer,
+            info_factory: InstructionInfoFactory::new(),
             register_file: Default::default(),
         }
     }
@@ -259,7 +261,32 @@ impl<'a> Tracee<'a> {
 
         // Hints are generated in two phases: we build a complete list of
         // expected hints (including all Read hints) in stage 1...
-        let mut hints = self.tracee_hints_stage1(&instr)?;
+        let rep = instr.has_rep_prefix() || instr.has_repe_prefix() || instr.has_repne_prefix();
+        let mut hints = if rep {
+            match instr.mnemonic() {
+                Mnemonic::Movsb | Mnemonic::Movsw | Mnemonic::Movsd | Mnemonic::Movsq => {
+                    unimplemented!()
+                }
+                Mnemonic::Lodsb | Mnemonic::Lodsw | Mnemonic::Lodsd | Mnemonic::Lodsq => {
+                    unimplemented!()
+                }
+                Mnemonic::Stosb | Mnemonic::Stosw | Mnemonic::Stosd | Mnemonic::Stosq => {
+                    self.tracee_hints_stos_stage1(&instr)?
+                }
+                Mnemonic::Cmpsb | Mnemonic::Cmpsw | Mnemonic::Cmpsd | Mnemonic::Cmpsq => {
+                    unimplemented!()
+                }
+                Mnemonic::Scasb | Mnemonic::Scasw | Mnemonic::Scasd | Mnemonic::Scasq => {
+                    unimplemented!()
+                }
+                // NOTE(ww): We only care about the rep prefixes on the special cases above.
+                // INS and OUTS aren't supported in Tiny86; other appearances are assumed to
+                // be padding or #UD/special behavior.
+                _ => self.tracee_hints_generic_stage1(&instr)?,
+            }
+        } else {
+            self.tracee_hints_generic_stage1(&instr)?
+        };
 
         ptrace::step(self.tracee_pid, None)?;
 
@@ -373,17 +400,26 @@ impl<'a> Tracee<'a> {
         })
     }
 
-    fn tracee_hints_stage1(&self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
+    fn tracee_hints_stos_stage1(&mut self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
+        // NOTE(ww): REP STOS is just `memset([EDI], EAX, ECX)`.
+        // Thus, we need to generate N write hints, where `N = ECX / 4`
+        // (1 for AL/AH, 2 for AX, etc).
+        log::debug!("stos");
+
+        let info = self.info_factory.info(&instr);
+        log::debug!("{:?} / {:?}", instr, info);
+
+        unimplemented!();
+    }
+
+    fn tracee_hints_generic_stage1(&mut self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
         log::debug!("memory hints stage 1");
         let mut hints = vec![];
 
-        // TODO(ww): Memory waste.
-        let info = {
-            let mut info_factory = InstructionInfoFactory::new();
-            info_factory
-                .info_options(&instr, InstructionInfoOptions::NO_REGISTER_USAGE)
-                .clone()
-        };
+        let info = self
+            .info_factory
+            .info_options(&instr, InstructionInfoOptions::NO_REGISTER_USAGE)
+            .clone();
 
         for used_mem in info.used_memory() {
             // We model writebacks as two separate memory ops, so split them up here.
