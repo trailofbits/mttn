@@ -497,6 +497,14 @@ impl<'a> Tracee<'a> {
     fn tracee_hints_stage2(&self, hints: &mut Vec<MemoryHint>) -> Result<()> {
         log::debug!("memory hints stage 2");
 
+        // NOTE(ww): By default, recent-ish x86 CPUs execute MOVS and STOS
+        // in "fast string operation" mode. This can cause stores to not appear
+        // when we expect them to, since they can be executed out-of-order.
+        // The "correct" fix for this is probably to toggle the
+        // fast-string-enable bit (0b) in the IA32_MISC_ENABLE MSR, but we just sleep
+        // for a bit to give the CPU a chance to catch up.
+        std::thread::sleep(std::time::Duration::from_millis(1));
+
         for hint in hints.iter_mut() {
             if hint.operation != MemoryOp::Write {
                 continue;
