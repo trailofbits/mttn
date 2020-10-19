@@ -281,6 +281,13 @@ impl<'a> Tracee<'a> {
         self.tracee_regs()?;
         let (instr, instr_bytes) = self.tracee_instr()?;
 
+        // TODO(ww): Check `instr` here and perform one of two cases:
+        // 1. If `instr` is an instruction that benefits from modeling/emulation
+        //    (e.g. `MOVS`), then emulate it and generate its memory hints
+        //    from the emulation.
+        // 2. Otherwise, generate the hints as normal (do phase 1, single-step,
+        //    then phase 2).
+
         // Hints are generated in two phases: we build a complete list of
         // expected hints (including all Read hints) in stage 1...
         let mut hints = self.tracee_hints_stage1(&instr)?;
@@ -397,6 +404,9 @@ impl<'a> Tracee<'a> {
         })
     }
 
+    /// Given a string instruction (e.g., `MOVS`, `LODS`) variant, return its
+    /// expected memory mask (i.e., the size in bytes that one execution
+    /// reads and/or writes).
     fn mask_from_str_instr(&self, instr: &Instruction) -> Result<MemoryMask> {
         Ok(match instr.mnemonic() {
             Mnemonic::Lodsb
