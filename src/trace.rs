@@ -12,7 +12,7 @@ use num::traits::{AsPrimitive, WrappingAdd, WrappingMul};
 use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::process::Command;
 
 const MAX_INSTR_LEN: usize = 15;
@@ -28,6 +28,28 @@ pub enum MemoryMask {
     Word = 2,
     DWord = 4,
     QWord = 8,
+}
+
+impl TryFrom<u64> for MemoryMask {
+    type Error = anyhow::Error;
+
+    fn try_from(size: u64) -> Result<Self> {
+        Ok(match size {
+            1 => MemoryMask::Byte,
+            2 => MemoryMask::Word,
+            4 => MemoryMask::DWord,
+            8 => MemoryMask::QWord,
+            _ => return Err(anyhow!("size {} doesn't have a supported mask", size)),
+        })
+    }
+}
+
+impl TryFrom<Register> for MemoryMask {
+    type Error = anyhow::Error;
+
+    fn try_from(reg: Register) -> Result<Self> {
+        (reg.info().size() as u64).try_into()
+    }
 }
 
 /// The access disposition of a concrete memory operation.
@@ -261,32 +283,7 @@ impl<'a> Tracee<'a> {
 
         // Hints are generated in two phases: we build a complete list of
         // expected hints (including all Read hints) in stage 1...
-        let rep = instr.has_rep_prefix() || instr.has_repe_prefix() || instr.has_repne_prefix();
-        let mut hints = if rep {
-            match instr.mnemonic() {
-                Mnemonic::Movsb | Mnemonic::Movsw | Mnemonic::Movsd | Mnemonic::Movsq => {
-                    unimplemented!()
-                }
-                Mnemonic::Lodsb | Mnemonic::Lodsw | Mnemonic::Lodsd | Mnemonic::Lodsq => {
-                    unimplemented!()
-                }
-                Mnemonic::Stosb | Mnemonic::Stosw | Mnemonic::Stosd | Mnemonic::Stosq => {
-                    self.tracee_hints_stos_stage1(&instr)?
-                }
-                Mnemonic::Cmpsb | Mnemonic::Cmpsw | Mnemonic::Cmpsd | Mnemonic::Cmpsq => {
-                    unimplemented!()
-                }
-                Mnemonic::Scasb | Mnemonic::Scasw | Mnemonic::Scasd | Mnemonic::Scasq => {
-                    unimplemented!()
-                }
-                // NOTE(ww): We only care about the rep prefixes on the special cases above.
-                // INS and OUTS aren't supported in Tiny86; other appearances are assumed to
-                // be padding or #UD/special behavior.
-                _ => self.tracee_hints_generic_stage1(&instr)?,
-            }
-        } else {
-            self.tracee_hints_generic_stage1(&instr)?
-        };
+        let mut hints = self.tracee_hints_stage1(&instr)?;
 
         ptrace::step(self.tracee_pid, None)?;
 
@@ -400,19 +397,69 @@ impl<'a> Tracee<'a> {
         })
     }
 
-    fn tracee_hints_stos_stage1(&mut self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
-        // NOTE(ww): REP STOS is just `memset([EDI], EAX, ECX)`.
-        // Thus, we need to generate N write hints, where `N = ECX / 4`
-        // (1 for AL/AH, 2 for AX, etc).
-        log::debug!("stos");
+    // fn tracee_hints_stos_stage1(&mut self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
+    //     // NOTE(ww): REP STOS is just `memset([EDI], EAX, ECX)`.
+    //     // Thus, we need to generate N write hints, where `N = ECX / 4`
+    //     // (1 for AL/AH, 2 for AX, etc).
+    //     log::debug!("stos");
 
-        let info = self.info_factory.info(&instr);
-        log::debug!("{:?} / {:?}", instr, info);
+    //     let info = self.info_factory.info(&instr);
 
-        unimplemented!();
+    //     let (counter, step, base_addr) = {
+    //         let used_regs = info.used_registers();
+
+    //         // NOTE(ww): Experimentally, iced-x86 packs these into used_registers()
+    //         // in the following order (32-bit for brevity):
+    //         // [EAX:CondRead, ECX:ReadCondWrite, ES:CondRead, EDI:CondRead, EDI:CondWrite]
+    //         let counter = self.register_file.value(used_regs[1].register())?;
+    //         let step = used_regs[0].register().info().size() as u64;
+    //         let base_addr = self.register_file.value(used_regs[3].register())?;
+
+    //         (counter, step, base_addr)
+    //     };
+
+    //     log::warn!("{:?} values / {:?} bytes / at addr 0x{:x}", counter, step, base_addr);
+
+    //     let mut hints = vec![];
+    //     for offset in 0..counter {
+    //         hints.push(MemoryHint {
+    //             address: base_addr - (offset * step),
+    //             operation: MemoryOp::Write,
+    //             mask: step.try_into()?,
+    //             data: 0, // NOTE(ww): Filled in during stage 2.
+    //         });
+    //     }
+
+    //     Ok(hints)
+    // }
+
+    fn mask_from_str_instr(&self, instr: &Instruction) -> Result<MemoryMask> {
+        Ok(match instr.mnemonic() {
+            Mnemonic::Lodsb
+            | Mnemonic::Stosb
+            | Mnemonic::Movsb
+            | Mnemonic::Cmpsb
+            | Mnemonic::Scasb => MemoryMask::Byte,
+            Mnemonic::Lodsw
+            | Mnemonic::Stosw
+            | Mnemonic::Movsw
+            | Mnemonic::Cmpsw
+            | Mnemonic::Scasw => MemoryMask::Word,
+            Mnemonic::Lodsd
+            | Mnemonic::Stosd
+            | Mnemonic::Movsd
+            | Mnemonic::Cmpsd
+            | Mnemonic::Scasd => MemoryMask::DWord,
+            Mnemonic::Lodsq
+            | Mnemonic::Stosq
+            | Mnemonic::Movsq
+            | Mnemonic::Cmpsq
+            | Mnemonic::Scasq => MemoryMask::QWord,
+            _ => return Err(anyhow!("unknown mask for instruction: {:?}", instr.code())),
+        })
     }
 
-    fn tracee_hints_generic_stage1(&mut self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
+    fn tracee_hints_stage1(&mut self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
         log::debug!("memory hints stage 1");
         let mut hints = vec![];
 
@@ -423,10 +470,15 @@ impl<'a> Tracee<'a> {
 
         for used_mem in info.used_memory() {
             // We model writebacks as two separate memory ops, so split them up here.
+            // Also: all conditional reads and writes are in fact real reads and writes,
+            // since we're single-stepping through REP'd instructions.
             let ops: &[MemoryOp] = match used_mem.access() {
                 OpAccess::Read => &[MemoryOp::Read],
+                OpAccess::CondRead => &[MemoryOp::Read],
                 OpAccess::Write => &[MemoryOp::Write],
+                OpAccess::CondWrite => &[MemoryOp::Write],
                 OpAccess::ReadWrite => &[MemoryOp::Read, MemoryOp::Write],
+                OpAccess::ReadCondWrite => &[MemoryOp::Read, MemoryOp::Write],
                 op => return Err(anyhow!("unsupported memop: {:?}", op)),
             };
 
@@ -435,6 +487,7 @@ impl<'a> Tracee<'a> {
                 MemorySize::UInt16 | MemorySize::Int16 => MemoryMask::Word,
                 MemorySize::UInt32 | MemorySize::Int32 => MemoryMask::DWord,
                 MemorySize::UInt64 | MemorySize::Int64 => MemoryMask::QWord,
+                MemorySize::Unknown => self.mask_from_str_instr(&instr)?,
                 size => {
                     if self.tracer.ignore_unsupported_memops {
                         log::warn!(
