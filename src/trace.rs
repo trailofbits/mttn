@@ -397,42 +397,6 @@ impl<'a> Tracee<'a> {
         })
     }
 
-    // fn tracee_hints_stos_stage1(&mut self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
-    //     // NOTE(ww): REP STOS is just `memset([EDI], EAX, ECX)`.
-    //     // Thus, we need to generate N write hints, where `N = ECX / 4`
-    //     // (1 for AL/AH, 2 for AX, etc).
-    //     log::debug!("stos");
-
-    //     let info = self.info_factory.info(&instr);
-
-    //     let (counter, step, base_addr) = {
-    //         let used_regs = info.used_registers();
-
-    //         // NOTE(ww): Experimentally, iced-x86 packs these into used_registers()
-    //         // in the following order (32-bit for brevity):
-    //         // [EAX:CondRead, ECX:ReadCondWrite, ES:CondRead, EDI:CondRead, EDI:CondWrite]
-    //         let counter = self.register_file.value(used_regs[1].register())?;
-    //         let step = used_regs[0].register().info().size() as u64;
-    //         let base_addr = self.register_file.value(used_regs[3].register())?;
-
-    //         (counter, step, base_addr)
-    //     };
-
-    //     log::warn!("{:?} values / {:?} bytes / at addr 0x{:x}", counter, step, base_addr);
-
-    //     let mut hints = vec![];
-    //     for offset in 0..counter {
-    //         hints.push(MemoryHint {
-    //             address: base_addr - (offset * step),
-    //             operation: MemoryOp::Write,
-    //             mask: step.try_into()?,
-    //             data: 0, // NOTE(ww): Filled in during stage 2.
-    //         });
-    //     }
-
-    //     Ok(hints)
-    // }
-
     fn mask_from_str_instr(&self, instr: &Instruction) -> Result<MemoryMask> {
         Ok(match instr.mnemonic() {
             Mnemonic::Lodsb
