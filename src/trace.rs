@@ -503,6 +503,7 @@ impl<'a> Tracee<'a> {
         // The "correct" fix for this is probably to toggle the
         // fast-string-enable bit (0b) in the IA32_MISC_ENABLE MSR, but we just sleep
         // for a bit to give the CPU a chance to catch up.
+        // TODO(ww): Longer term, we should just model REP'd instructions outright.
         std::thread::sleep(std::time::Duration::from_millis(1));
 
         for hint in hints.iter_mut() {
