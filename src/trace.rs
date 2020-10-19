@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use iced_x86::{
     Code, Decoder, DecoderOptions, Instruction, InstructionInfoFactory, InstructionInfoOptions,
-    MemorySize, OpAccess, Register, UsedMemory,
+    MemorySize, Mnemonic, OpAccess, Register, UsedMemory,
 };
 use nix::sys::ptrace;
 use nix::sys::signal;
@@ -12,7 +12,7 @@ use num::traits::{AsPrimitive, WrappingAdd, WrappingMul};
 use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::process::Command;
 
 const MAX_INSTR_LEN: usize = 15;
@@ -28,6 +28,28 @@ pub enum MemoryMask {
     Word = 2,
     DWord = 4,
     QWord = 8,
+}
+
+impl TryFrom<u64> for MemoryMask {
+    type Error = anyhow::Error;
+
+    fn try_from(size: u64) -> Result<Self> {
+        Ok(match size {
+            1 => MemoryMask::Byte,
+            2 => MemoryMask::Word,
+            4 => MemoryMask::DWord,
+            8 => MemoryMask::QWord,
+            _ => return Err(anyhow!("size {} doesn't have a supported mask", size)),
+        })
+    }
+}
+
+impl TryFrom<Register> for MemoryMask {
+    type Error = anyhow::Error;
+
+    fn try_from(reg: Register) -> Result<Self> {
+        (reg.info().size() as u64).try_into()
+    }
 }
 
 /// The access disposition of a concrete memory operation.
@@ -235,6 +257,7 @@ pub struct Tracee<'a> {
     terminated: bool,
     tracee_pid: Pid,
     tracer: &'a Tracer,
+    info_factory: InstructionInfoFactory,
     register_file: RegisterFile,
 }
 
@@ -247,6 +270,7 @@ impl<'a> Tracee<'a> {
             terminated: false,
             tracee_pid: tracee_pid,
             tracer: &tracer,
+            info_factory: InstructionInfoFactory::new(),
             register_file: Default::default(),
         }
     }
@@ -373,24 +397,52 @@ impl<'a> Tracee<'a> {
         })
     }
 
-    fn tracee_hints_stage1(&self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
+    fn mask_from_str_instr(&self, instr: &Instruction) -> Result<MemoryMask> {
+        Ok(match instr.mnemonic() {
+            Mnemonic::Lodsb
+            | Mnemonic::Stosb
+            | Mnemonic::Movsb
+            | Mnemonic::Cmpsb
+            | Mnemonic::Scasb => MemoryMask::Byte,
+            Mnemonic::Lodsw
+            | Mnemonic::Stosw
+            | Mnemonic::Movsw
+            | Mnemonic::Cmpsw
+            | Mnemonic::Scasw => MemoryMask::Word,
+            Mnemonic::Lodsd
+            | Mnemonic::Stosd
+            | Mnemonic::Movsd
+            | Mnemonic::Cmpsd
+            | Mnemonic::Scasd => MemoryMask::DWord,
+            Mnemonic::Lodsq
+            | Mnemonic::Stosq
+            | Mnemonic::Movsq
+            | Mnemonic::Cmpsq
+            | Mnemonic::Scasq => MemoryMask::QWord,
+            _ => return Err(anyhow!("unknown mask for instruction: {:?}", instr.code())),
+        })
+    }
+
+    fn tracee_hints_stage1(&mut self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
         log::debug!("memory hints stage 1");
         let mut hints = vec![];
 
-        // TODO(ww): Memory waste.
-        let info = {
-            let mut info_factory = InstructionInfoFactory::new();
-            info_factory
-                .info_options(&instr, InstructionInfoOptions::NO_REGISTER_USAGE)
-                .clone()
-        };
+        let info = self
+            .info_factory
+            .info_options(&instr, InstructionInfoOptions::NO_REGISTER_USAGE)
+            .clone();
 
         for used_mem in info.used_memory() {
             // We model writebacks as two separate memory ops, so split them up here.
+            // Also: all conditional reads and writes are in fact real reads and writes,
+            // since we're single-stepping through REP'd instructions.
             let ops: &[MemoryOp] = match used_mem.access() {
                 OpAccess::Read => &[MemoryOp::Read],
+                OpAccess::CondRead => &[MemoryOp::Read],
                 OpAccess::Write => &[MemoryOp::Write],
+                OpAccess::CondWrite => &[MemoryOp::Write],
                 OpAccess::ReadWrite => &[MemoryOp::Read, MemoryOp::Write],
+                OpAccess::ReadCondWrite => &[MemoryOp::Read, MemoryOp::Write],
                 op => return Err(anyhow!("unsupported memop: {:?}", op)),
             };
 
@@ -399,6 +451,7 @@ impl<'a> Tracee<'a> {
                 MemorySize::UInt16 | MemorySize::Int16 => MemoryMask::Word,
                 MemorySize::UInt32 | MemorySize::Int32 => MemoryMask::DWord,
                 MemorySize::UInt64 | MemorySize::Int64 => MemoryMask::QWord,
+                MemorySize::Unknown => self.mask_from_str_instr(&instr)?,
                 size => {
                     if self.tracer.ignore_unsupported_memops {
                         log::warn!(
@@ -443,6 +496,15 @@ impl<'a> Tracee<'a> {
 
     fn tracee_hints_stage2(&self, hints: &mut Vec<MemoryHint>) -> Result<()> {
         log::debug!("memory hints stage 2");
+
+        // NOTE(ww): By default, recent-ish x86 CPUs execute MOVS and STOS
+        // in "fast string operation" mode. This can cause stores to not appear
+        // when we expect them to, since they can be executed out-of-order.
+        // The "correct" fix for this is probably to toggle the
+        // fast-string-enable bit (0b) in the IA32_MISC_ENABLE MSR, but we just sleep
+        // for a bit to give the CPU a chance to catch up.
+        // TODO(ww): Longer term, we should just model REP'd instructions outright.
+        std::thread::sleep(std::time::Duration::from_millis(1));
 
         for hint in hints.iter_mut() {
             if hint.operation != MemoryOp::Write {
