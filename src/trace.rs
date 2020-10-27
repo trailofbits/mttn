@@ -1,14 +1,13 @@
 use anyhow::{anyhow, Context, Result};
 use iced_x86::{
     Code, Decoder, DecoderOptions, Instruction, InstructionInfoFactory, InstructionInfoOptions,
-    MemorySize, Mnemonic, OpAccess, Register, UsedMemory,
+    MemorySize, Mnemonic, OpAccess, Register,
 };
 use nix::sys::ptrace;
 use nix::sys::signal;
 use nix::sys::uio;
 use nix::sys::wait;
 use nix::unistd::Pid;
-use num::traits::{AsPrimitive, WrappingAdd, WrappingMul};
 use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
@@ -192,36 +191,21 @@ impl RegisterFile {
             Register::R15 => Ok(self.r15),
             Register::RIP => Ok(self.rip),
 
+            // Segment registers. We return these by address rather than segment descriptor,
+            // and make them always 0 per our Tiny86 model.
+            // TODO(ww): FSBASE and GSBASE, maybe.
+            Register::SS
+            | Register::CS
+            | Register::DS
+            | Register::ES
+            | Register::FS
+            | Register::GS => Ok(0),
+
             // Everything else (vector regs, control regs, debug regs, etc) is unsupported.
             // NOTE(ww): We track rflags in this struct, but iced-x86 doesn't have a Register
             // variant for it (presumably because it's unaddressable).
             _ => Err(anyhow!("untracked register requested: {:?}", reg)),
         }
-    }
-
-    /// Given a computed `UsedMemory` for an instruction, compute the effective address associated
-    /// with the memory access.
-    fn effective_address<T>(&self, mem: &UsedMemory) -> Result<u64>
-    where
-        T: Copy + WrappingAdd + WrappingMul + Into<u64> + 'static,
-        u32: AsPrimitive<T>,
-        u64: AsPrimitive<T>,
-    {
-        let base = match mem.base() {
-            Register::None => 0u64.as_(),
-            reg => self.value(reg)?.as_(),
-        };
-
-        let index = match mem.index() {
-            Register::None => 0u64.as_(),
-            reg => self.value(reg)?.as_(),
-        };
-
-        let effective = base
-            .wrapping_add(&index.wrapping_mul(&mem.scale().as_()))
-            .wrapping_add(&mem.displacement().as_());
-
-        Ok(effective.into())
     }
 }
 
@@ -475,11 +459,9 @@ impl<'a> Tracee<'a> {
                 }
             };
 
-            let addr = match self.tracer.bitness {
-                32 => self.register_file.effective_address::<u32>(&used_mem)?,
-                64 => self.register_file.effective_address::<u64>(&used_mem)?,
-                _ => unreachable!(),
-            };
+            let addr = used_mem
+                .try_virtual_address(0, |reg, _, _| self.register_file.value(reg).ok())
+                .ok_or_else(|| anyhow!("effective address calculation failed"))?;
 
             log::debug!("effective virtual addr: {:x}", addr);
 
@@ -592,6 +574,7 @@ impl Tracer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced_x86::UsedMemory;
 
     fn dummy_regs() -> RegisterFile {
         RegisterFile {
@@ -599,32 +582,6 @@ mod tests {
             rdi: 0x00000000feedface,
             ..Default::default()
         }
-    }
-
-    fn dummy_usedmemory32() -> UsedMemory {
-        // CS:[EAX + (EDI * 4) + 100]
-        UsedMemory::new(
-            Register::CS,  /* segment */
-            Register::EAX, /* base */
-            Register::EDI, /* index */
-            4,             /* scale */
-            100,           /* displacement */
-            MemorySize::UInt32,
-            OpAccess::Read,
-        )
-    }
-
-    fn dummy_usedmemory64() -> UsedMemory {
-        // CS:[RAX + (RDI * 8) + 64]
-        UsedMemory::new(
-            Register::CS,  /* segment */
-            Register::RAX, /* base */
-            Register::RDI, /* index */
-            8,             /* scale */
-            64,            /* displacement */
-            MemorySize::UInt32,
-            OpAccess::Read,
-        )
     }
 
     #[test]
@@ -638,34 +595,21 @@ mod tests {
         assert_eq!(regs.value(Register::EAX).unwrap(), 0xccddeeff);
         assert_eq!(regs.value(Register::RAX).unwrap(), 0x9900aabbccddeeff);
 
+        // Segment registers always return a base address of 0.
+        assert_eq!(regs.value(Register::AL).unwrap(), 0xff);
+        assert_eq!(regs.value(Register::AH).unwrap(), 0xee);
+        assert_eq!(regs.value(Register::AX).unwrap(), 0xeeff);
+        assert_eq!(regs.value(Register::EAX).unwrap(), 0xccddeeff);
+        assert_eq!(regs.value(Register::RAX).unwrap(), 0x9900aabbccddeeff);
+
+        assert_eq!(regs.value(Register::SS).unwrap(), 0);
+        assert_eq!(regs.value(Register::CS).unwrap(), 0);
+        assert_eq!(regs.value(Register::DS).unwrap(), 0);
+        assert_eq!(regs.value(Register::ES).unwrap(), 0);
+        assert_eq!(regs.value(Register::FS).unwrap(), 0);
+        assert_eq!(regs.value(Register::GS).unwrap(), 0);
+
         // Unaddressable and unsupported registers return an Err.
-        assert!(regs.value(Register::SS).is_err());
-    }
-
-    #[test]
-    fn test_register_file_effective_address() {
-        let regs = dummy_regs();
-
-        {
-            let used_memory = dummy_usedmemory32();
-            let effective = regs.effective_address::<u32>(&used_memory).unwrap();
-            let effective_exp: u64 = (regs.rax as u32)
-                .wrapping_add((regs.rdi as u32).wrapping_mul(used_memory.scale()))
-                .wrapping_add(used_memory.displacement() as u32)
-                .into();
-
-            assert_eq!(effective, effective_exp);
-        }
-
-        {
-            let used_memory = dummy_usedmemory64();
-            let effective = regs.effective_address::<u64>(&used_memory).unwrap();
-            let effective_exp = regs
-                .rax
-                .wrapping_add(regs.rdi.wrapping_mul(used_memory.scale().into()))
-                .wrapping_add(used_memory.displacement());
-
-            assert_eq!(effective, effective_exp);
-        }
+        assert!(regs.value(Register::ST0).is_err());
     }
 }
