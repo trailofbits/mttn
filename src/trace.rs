@@ -574,6 +574,7 @@ impl Tracer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced_x86::UsedMemory;
 
     fn dummy_regs() -> RegisterFile {
         RegisterFile {
@@ -581,32 +582,6 @@ mod tests {
             rdi: 0x00000000feedface,
             ..Default::default()
         }
-    }
-
-    fn dummy_usedmemory32() -> UsedMemory {
-        // CS:[EAX + (EDI * 4) + 100]
-        UsedMemory::new(
-            Register::CS,  /* segment */
-            Register::EAX, /* base */
-            Register::EDI, /* index */
-            4,             /* scale */
-            100,           /* displacement */
-            MemorySize::UInt32,
-            OpAccess::Read,
-        )
-    }
-
-    fn dummy_usedmemory64() -> UsedMemory {
-        // CS:[RAX + (RDI * 8) + 64]
-        UsedMemory::new(
-            Register::CS,  /* segment */
-            Register::RAX, /* base */
-            Register::RDI, /* index */
-            8,             /* scale */
-            64,            /* displacement */
-            MemorySize::UInt32,
-            OpAccess::Read,
-        )
     }
 
     #[test]
@@ -620,7 +595,21 @@ mod tests {
         assert_eq!(regs.value(Register::EAX).unwrap(), 0xccddeeff);
         assert_eq!(regs.value(Register::RAX).unwrap(), 0x9900aabbccddeeff);
 
+        // Segment registers always return a base address of 0.
+        assert_eq!(regs.value(Register::AL).unwrap(), 0xff);
+        assert_eq!(regs.value(Register::AH).unwrap(), 0xee);
+        assert_eq!(regs.value(Register::AX).unwrap(), 0xeeff);
+        assert_eq!(regs.value(Register::EAX).unwrap(), 0xccddeeff);
+        assert_eq!(regs.value(Register::RAX).unwrap(), 0x9900aabbccddeeff);
+
+        assert_eq!(regs.value(Register::SS).unwrap(), 0);
+        assert_eq!(regs.value(Register::CS).unwrap(), 0);
+        assert_eq!(regs.value(Register::DS).unwrap(), 0);
+        assert_eq!(regs.value(Register::ES).unwrap(), 0);
+        assert_eq!(regs.value(Register::FS).unwrap(), 0);
+        assert_eq!(regs.value(Register::GS).unwrap(), 0);
+
         // Unaddressable and unsupported registers return an Err.
-        assert!(regs.value(Register::SS).is_err());
+        assert!(regs.value(Register::ST0).is_err());
     }
 }
