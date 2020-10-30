@@ -108,6 +108,8 @@ pub struct RegisterFile {
     r15: u64,
     rip: u64,
     rflags: u64,
+    fs_base: u64,
+    gs_base: u64,
 }
 
 impl RegisterFile {
@@ -191,15 +193,14 @@ impl RegisterFile {
             Register::R15 => Ok(self.r15),
             Register::RIP => Ok(self.rip),
 
-            // Segment registers. We return these by address rather than segment descriptor,
-            // and make them always 0 per our Tiny86 model.
-            // TODO(ww): FSBASE and GSBASE, maybe.
-            Register::SS
-            | Register::CS
-            | Register::DS
-            | Register::ES
-            | Register::FS
-            | Register::GS => Ok(0),
+            // FS and GS: We support these because Linux uses them for TLS.
+            // We return the FSBASE and GSBASE values here, since we're returning by address
+            // and not by descriptor value.
+            Register::FS => Ok(self.fs_base),
+            Register::GS => Ok(self.gs_base),
+
+            // All other segment registers are treated as 0, per the Tiny86 model.
+            Register::SS | Register::CS | Register::DS | Register::ES => Ok(0),
 
             // Everything else (vector regs, control regs, debug regs, etc) is unsupported.
             // NOTE(ww): We track rflags in this struct, but iced-x86 doesn't have a Register
@@ -230,6 +231,8 @@ impl From<libc::user_regs_struct> for RegisterFile {
             r15: user_regs.r15,
             rip: user_regs.rip,
             rflags: user_regs.eflags,
+            fs_base: user_regs.fs_base,
+            gs_base: user_regs.gs_base,
         }
     }
 }
