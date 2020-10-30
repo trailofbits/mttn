@@ -200,10 +200,7 @@ impl RegisterFile {
             Register::GS => Ok(self.gs_base),
 
             // All other segment registers are treated as 0, per the Tiny86 model.
-            Register::SS
-            | Register::CS
-            | Register::DS
-            | Register::ES => Ok(0),
+            Register::SS | Register::CS | Register::DS | Register::ES => Ok(0),
 
             // Everything else (vector regs, control regs, debug regs, etc) is unsupported.
             // NOTE(ww): We track rflags in this struct, but iced-x86 doesn't have a Register
