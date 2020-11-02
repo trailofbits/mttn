@@ -12,6 +12,7 @@ use rangemap::RangeMap;
 use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
+use std::cmp;
 use std::convert::{TryFrom, TryInto};
 use std::process::Command;
 
@@ -332,18 +333,25 @@ impl<'a> Tracee<'a> {
     /// Returns the iced-x86 `Instruction` and raw instruction bytes at the tracee's
     /// current instruction pointer.
     fn tracee_instr(&self) -> Result<(Instruction, Vec<u8>)> {
-        let mut bytes = vec![0u8; MAX_INSTR_LEN];
-        let remote_iov = uio::RemoteIoVec {
-            base: self.register_file.rip as usize,
-            len: MAX_INSTR_LEN,
-        };
+        let bytes = {
+            let mut bytes = vec![0u8; MAX_INSTR_LEN];
+            let (range, pages) = self
+                .executable_pages
+                .get_key_value(&self.register_file.rip)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "{:x} not in known instruction pages",
+                        self.register_file.rip
+                    )
+                })?;
 
-        // TODO(ww): Check the length here.
-        uio::process_vm_readv(
-            self.tracee_pid,
-            &[uio::IoVec::from_mut_slice(&mut bytes)],
-            &[remote_iov],
-        )?;
+            let begin = (self.register_file.rip - range.start) as usize;
+            let end = cmp::min(begin + MAX_INSTR_LEN, pages.len());
+
+            bytes.copy_from_slice(&pages[begin..end]);
+
+            bytes
+        };
 
         log::debug!("fetched instruction bytes: {:?}", bytes);
 
@@ -418,7 +426,8 @@ impl<'a> Tracee<'a> {
                 self.tracee_data(map.address_range.begin, size as usize)?
             };
 
-            self.executable_pages.insert(map.address_range.begin..map.address_range.end, exec_range);
+            self.executable_pages
+                .insert(map.address_range.begin..map.address_range.end, exec_range);
         }
 
         Ok(())
