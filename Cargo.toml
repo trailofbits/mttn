@@ -12,6 +12,8 @@ iced-x86 = "1.9.1"
 libc = "0.2"
 log = "0.4"
 nix = "0.19"
+rangemap = "0.1.7"
+rsprocmaps = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 spawn-ptrace = "0.1.2"

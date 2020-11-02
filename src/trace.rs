@@ -8,6 +8,7 @@ use nix::sys::signal;
 use nix::sys::uio;
 use nix::sys::wait;
 use nix::unistd::Pid;
+use rangemap::RangeMap;
 use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
@@ -87,7 +88,7 @@ pub struct Step {
 ///
 /// Only the standard addressable registers, plus `RFLAGS`, are tracked.
 /// `mttn` assumes that all segment base addresses are `0` and therefore doesn't
-/// track them.
+/// track them (with the exception of the `FSBASE` and `GSBASE` MSRs).
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct RegisterFile {
     rax: u64,
@@ -246,20 +247,28 @@ pub struct Tracee<'a> {
     tracer: &'a Tracer,
     info_factory: InstructionInfoFactory,
     register_file: RegisterFile,
+    executable_pages: RangeMap<u64, Vec<u8>>,
 }
 
 impl<'a> Tracee<'a> {
     /// Create a new `Tracee` from the given PID (presumably either spawned with `PTRACE_TRACEME`
     /// or recently attached to) and `Tracer`.
-    fn new(tracee_pid: Pid, tracer: &'a Tracer) -> Self {
+    fn new(tracee_pid: Pid, tracer: &'a Tracer) -> Result<Self> {
         #[allow(clippy::redundant_field_names)]
-        Self {
+        let mut tracee = Self {
             terminated: false,
             tracee_pid: tracee_pid,
             tracer: &tracer,
             info_factory: InstructionInfoFactory::new(),
             register_file: Default::default(),
-        }
+            executable_pages: Default::default(),
+        };
+
+        // NOTE(ww): We do this after Tracee initialization to make our state
+        // management just a little bit simpler.
+        tracee.find_exec_pages()?;
+
+        Ok(tracee)
     }
 
     /// Step the tracee forwards by one instruction, returning the trace `Step` or
@@ -350,21 +359,32 @@ impl<'a> Tracee<'a> {
         }
     }
 
+    fn tracee_data_by_mask(&self, addr: u64, mask: MemoryMask) -> Result<u64> {
+        let bytes = self.tracee_data(addr, mask as usize)?;
+
+        Ok(match mask {
+            MemoryMask::Byte => bytes[0] as u64,
+            MemoryMask::Word => u16::from_le_bytes(bytes.as_slice().try_into()?) as u64,
+            MemoryMask::DWord => u32::from_le_bytes(bytes.as_slice().try_into()?) as u64,
+            MemoryMask::QWord => u64::from_le_bytes(bytes.as_slice().try_into()?) as u64,
+        })
+    }
+
     /// Reads a piece of the tracee's memory, starting at `addr`.
-    fn tracee_data(&self, addr: u64, mask: MemoryMask) -> Result<u64> {
-        log::debug!("attempting to read tracee @ 0x{:x} ({:?})", addr, mask);
+    fn tracee_data(&self, addr: u64, size: usize) -> Result<Vec<u8>> {
+        log::debug!("attempting to read tracee @ 0x{:x} ({:?})", addr, size);
 
         // NOTE(ww): Could probably use ptrace::read() here since we're always <= 64 bits,
         // but I find process_vm_readv a little more readable.
-        let mut bytes = vec![0u8; mask as usize];
+        let mut bytes = vec![0u8; size];
         let remote_iov = uio::RemoteIoVec {
             base: addr as usize,
-            len: mask as usize,
+            len: size,
         };
 
         // NOTE(ww): A failure here indicates a bug in the tracer, not the tracee.
         // In particular it indicates that we either (1) calculated the effective
-        // address incorrectly, or (2) calculated the mask incorrectly.
+        // address incorrectly, or (2) calculated the size incorrectly.
         if let Err(e) = uio::process_vm_readv(
             self.tracee_pid,
             &[uio::IoVec::from_mut_slice(&mut bytes)],
@@ -378,17 +398,30 @@ impl<'a> Tracee<'a> {
                 ptrace::detach(self.tracee_pid, Some(signal::Signal::SIGSTOP))?;
             }
 
-            return Err(e).with_context(|| format!("Fault: size: {:?}, address: {:x}", mask, addr));
+            return Err(e).with_context(|| format!("Fault: size: {:?}, address: {:x}", size, addr));
         } else {
             log::debug!("fetched data bytes: {:?}", bytes);
         }
 
-        Ok(match mask {
-            MemoryMask::Byte => bytes[0] as u64,
-            MemoryMask::Word => u16::from_le_bytes(bytes.as_slice().try_into()?) as u64,
-            MemoryMask::DWord => u32::from_le_bytes(bytes.as_slice().try_into()?) as u64,
-            MemoryMask::QWord => u64::from_le_bytes(bytes.as_slice().try_into()?) as u64,
-        })
+        Ok(bytes)
+    }
+
+    fn find_exec_pages(&mut self) -> Result<()> {
+        for map in rsprocmaps::from_pid(self.tracee_pid.as_raw())? {
+            let map = map?;
+            if !map.permissions.executable {
+                continue;
+            }
+
+            let exec_range = {
+                let size = map.address_range.end - map.address_range.begin;
+                self.tracee_data(map.address_range.begin, size as usize)?
+            };
+
+            self.executable_pages.insert(map.address_range.begin..map.address_range.end, exec_range);
+        }
+
+        Ok(())
     }
 
     /// Given a string instruction (e.g., `MOVS`, `LODS`) variant, return its
@@ -470,7 +503,7 @@ impl<'a> Tracee<'a> {
 
             for op in ops {
                 let data = match op {
-                    MemoryOp::Read => self.tracee_data(addr, mask)?,
+                    MemoryOp::Read => self.tracee_data_by_mask(addr, mask)?,
                     MemoryOp::Write => 0,
                 };
 
@@ -506,7 +539,7 @@ impl<'a> Tracee<'a> {
                 continue;
             }
 
-            let data = self.tracee_data(hint.address, hint.mask)?;
+            let data = self.tracee_data_by_mask(hint.address, hint.mask)?;
             hint.data = data;
         }
 
@@ -579,7 +612,7 @@ impl Tracer {
         // finally exiting, giving us one last chance to do some inspection.
         ptrace::setoptions(tracee_pid, ptrace::Options::PTRACE_O_TRACEEXIT)?;
 
-        Ok(Tracee::new(tracee_pid, &self))
+        Tracee::new(tracee_pid, &self)
     }
 }
 
