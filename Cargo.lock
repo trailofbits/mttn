@@ -153,7 +153,7 @@ dependencies = [
  "iced-x86",
  "libc",
  "log",
- "nix",
+ "nix 0.19.0",
  "serde",
  "serde_json",
  "spawn-ptrace",
@@ -164,6 +164,18 @@ name = "nix"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83450fe6a6142ddd95fb064b746083fc4ef1705fe81f64a64e1d4b39f54a1055"
+dependencies = [
+ "bitflags",
+ "cc",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85db2feff6bf70ebc3a4793191517d5f0331100a2f10f9bf93b5e5214f32b7b7"
 dependencies = [
  "bitflags",
  "cc",
@@ -280,7 +292,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b572503c81aa40e1e61954bca89b863c344e0f310fd51f308d933255bf4f756"
 dependencies = [
- "nix",
+ "nix 0.18.0",
 ]
 
 [[package]]
