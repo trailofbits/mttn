@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 anyhow = "1.0"
 clap = "2.33"
-env_logger = "0.7"
+env_logger = "0.8"
 iced-x86 = "1.9.1"
 libc = "0.2"
 log = "0.4"
