@@ -375,7 +375,7 @@ impl<'a> Tracee<'a> {
 
         match instr.code() {
             Code::INVALID => Err(anyhow!("invalid instruction")),
-            _ => Ok((instr, bytes)),
+            _ => Ok((instr, bytes[..instr.len()])),
         }
     }
 
