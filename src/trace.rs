@@ -349,10 +349,7 @@ impl<'a> Tracee<'a> {
                     self.executable_pages
                         .get_key_value(&self.register_file.rip)
                         .ok_or_else(|| {
-                            anyhow!(
-                                "{:x} not in known executable pages",
-                                self.register_file.rip
-                            )
+                            anyhow!("{:x} not in known executable pages", self.register_file.rip)
                         })?
                 }
             };
