@@ -267,7 +267,7 @@ impl<'a> Tracee<'a> {
 
         // NOTE(ww): We do this after Tracee initialization to make our state
         // management just a little bit simpler.
-        tracee.find_exec_pages()?;
+        tracee.update_exec_pages()?;
 
         Ok(tracee)
     }
@@ -332,18 +332,30 @@ impl<'a> Tracee<'a> {
 
     /// Returns the iced-x86 `Instruction` and raw instruction bytes at the tracee's
     /// current instruction pointer.
-    fn tracee_instr(&self) -> Result<(Instruction, Vec<u8>)> {
+    fn tracee_instr(&mut self) -> Result<(Instruction, Vec<u8>)> {
         let bytes = {
             let mut bytes = vec![0u8; MAX_INSTR_LEN];
-            let (range, pages) = self
-                .executable_pages
-                .get_key_value(&self.register_file.rip)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "{:x} not in known instruction pages",
-                        self.register_file.rip
-                    )
-                })?;
+
+            let (range, pages) = match self.executable_pages.get_key_value(&self.register_file.rip)
+            {
+                Some((range, pages)) => (range, pages),
+                None => {
+                    // We failed to fetch an instruction from our cache of the tracee's executable
+                    // pages. This means one of two things: either the tracee has mapped a new
+                    // executable page in (or resized an existing one), or the instruction pointer
+                    // is invalid. We update our page cache to handle the first case, falling back
+                    // on a failure if the instruction still isn't present.
+                    self.update_exec_pages()?;
+                    self.executable_pages
+                        .get_key_value(&self.register_file.rip)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "{:x} not in known executable pages",
+                                self.register_file.rip
+                            )
+                        })?
+                }
+            };
 
             let begin = (self.register_file.rip - range.start) as usize;
             let end = cmp::min(begin + MAX_INSTR_LEN, pages.len());
@@ -414,10 +426,20 @@ impl<'a> Tracee<'a> {
         Ok(bytes)
     }
 
-    fn find_exec_pages(&mut self) -> Result<()> {
+    fn update_exec_pages(&mut self) -> Result<()> {
         for map in rsprocmaps::from_pid(self.tracee_pid.as_raw())? {
             let map = map?;
+
+            // We're only concerned with executable pages.
             if !map.permissions.executable {
+                continue;
+            }
+
+            // This function is potentially called multiple times, so skip
+            // ranges that we've already seen.
+            if self.executable_pages.contains_key(&map.address_range.begin)
+                && self.executable_pages.contains_key(&map.address_range.end)
+            {
                 continue;
             }
 
