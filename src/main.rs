@@ -40,12 +40,12 @@ fn app<'a, 'b>() -> App<'a, 'b> {
         .arg(
             Arg::with_name("tracee-name")
                 .help("The program to trace")
-                .index(1)
+                .index(1),
         )
         .arg(
             Arg::with_name("tracee-args")
                 .help("The command-line arguments to execute the tracee with")
-                .raw(true)
+                .raw(true),
         )
         .group(
             ArgGroup::with_name("target")
