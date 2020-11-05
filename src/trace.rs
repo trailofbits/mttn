@@ -249,8 +249,8 @@ pub struct Tracee<'a> {
 }
 
 impl<'a> Tracee<'a> {
-    /// Create a new `Tracee` from the given PID (presumably spawned with `PTRACE_TRACEME`)
-    /// and `Tracer`.
+    /// Create a new `Tracee` from the given PID (presumably either spawned with `PTRACE_TRACEME`
+    /// or recently attached to) and `Tracer`.
     fn new(tracee_pid: Pid, tracer: &'a Tracer) -> Self {
         #[allow(clippy::redundant_field_names)]
         Self {
@@ -531,7 +531,8 @@ pub struct Tracer {
     pub ignore_unsupported_memops: bool,
     pub debug_on_fault: bool,
     pub bitness: u32,
-    pub tracee: String,
+    pub tracee_pid: Option<Pid>,
+    pub tracee_name: Option<String>,
     pub tracee_args: Vec<String>,
 }
 
@@ -541,7 +542,10 @@ impl From<clap::ArgMatches<'_>> for Tracer {
             ignore_unsupported_memops: matches.is_present("ignore-unsupported-memops"),
             debug_on_fault: matches.is_present("debug-on-fault"),
             bitness: matches.value_of("mode").unwrap().parse().unwrap(),
-            tracee: matches.value_of("tracee").unwrap().into(),
+            tracee_pid: matches
+                .value_of("tracee-pid")
+                .map(|p| Pid::from_raw(p.parse().unwrap())),
+            tracee_name: matches.value_of("tracee-name").map(Into::into),
             tracee_args: matches
                 .values_of("tracee-args")
                 .map(|v| v.map(|a| a.to_string()).collect())
@@ -552,18 +556,23 @@ impl From<clap::ArgMatches<'_>> for Tracer {
 
 impl Tracer {
     pub fn trace(&self) -> Result<Tracee> {
-        let tracee_pid = {
-            let child = Command::new(&self.tracee)
+        let tracee_pid = if let Some(tracee_name) = &self.tracee_name {
+            let child = Command::new(&tracee_name)
                 .args(&self.tracee_args)
                 .spawn_ptrace()?;
-            Pid::from_raw(child.id() as i32)
-        };
 
-        log::debug!(
-            "spawned {} for tracing as child {}",
-            self.tracee,
+            log::debug!(
+                "spawned {} for tracing as child {}",
+                tracee_name,
+                child.id()
+            );
+
+            Pid::from_raw(child.id() as i32)
+        } else {
+            let tracee_pid = self.tracee_pid.unwrap();
+            ptrace::attach(tracee_pid)?;
             tracee_pid
-        );
+        };
 
         // Our tracee is now live and ready to be traced, but in a stopped state.
         // We set PTRACE_O_TRACEEXIT on it to make sure it stops right before
