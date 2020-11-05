@@ -249,8 +249,8 @@ pub struct Tracee<'a> {
 }
 
 impl<'a> Tracee<'a> {
-    /// Create a new `Tracee` from the given PID (presumably spawned with `PTRACE_TRACEME`)
-    /// and `Tracer`.
+    /// Create a new `Tracee` from the given PID (presumably either spawned with `PTRACE_TRACEME`
+    /// or recently attached to) and `Tracer`.
     fn new(tracee_pid: Pid, tracer: &'a Tracer) -> Self {
         #[allow(clippy::redundant_field_names)]
         Self {
