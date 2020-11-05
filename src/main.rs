@@ -34,24 +34,23 @@ fn app<'a, 'b>() -> App<'a, 'b> {
             Arg::with_name("tracee-pid")
                 .help("Attach to the given PID for tracing")
                 .short("a")
-                .long("attach"),
+                .long("attach")
+                .takes_value(true),
         )
         .arg(
             Arg::with_name("tracee-name")
                 .help("The program to trace")
                 .index(1)
-                .group("tracee"),
         )
         .arg(
             Arg::with_name("tracee-args")
-                .help("The command-line arguments to pass to the tracee process")
+                .help("The command-line arguments to execute the tracee with")
                 .raw(true)
-                .group("tracee"),
         )
         .group(
             ArgGroup::with_name("target")
                 .required(true)
-                .args(&["attach-pid", "tracee"]),
+                .args(&["tracee-pid", "tracee-name"]),
         )
 }
 
