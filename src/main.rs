@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{App, Arg};
+use clap::{App, Arg, ArgGroup};
 
 use std::process;
 
@@ -31,15 +31,27 @@ fn app<'a, 'b>() -> App<'a, 'b> {
                 .long("debug-on-fault"),
         )
         .arg(
-            Arg::with_name("tracee")
+            Arg::with_name("tracee-pid")
+                .help("Attach to the given PID for tracing")
+                .short("a")
+                .long("attach"),
+        )
+        .arg(
+            Arg::with_name("tracee-name")
                 .help("The program to trace")
                 .index(1)
-                .required(true),
+                .group("tracee"),
         )
         .arg(
             Arg::with_name("tracee-args")
                 .help("The command-line arguments to pass to the tracee process")
-                .raw(true),
+                .raw(true)
+                .group("tracee"),
+        )
+        .group(
+            ArgGroup::with_name("target")
+                .required(true)
+                .args(&["attach-pid", "tracee"]),
         )
 }
 
