@@ -70,7 +70,7 @@ pub struct MemoryHint {
     address: u64,
     operation: MemoryOp,
     mask: MemoryMask,
-    data: u64,
+    data: Vec<u8>,
 }
 
 /// Represents an individual step in the trace, including the raw instruction bytes,
