@@ -466,7 +466,7 @@ impl<'a> Tracee<'a> {
             for op in ops {
                 let data = match op {
                     MemoryOp::Read => self.tracee_data(addr, mask)?,
-                    MemoryOp::Write => 0,
+                    MemoryOp::Write => Vec::new(),
                 };
 
                 #[allow(clippy::redundant_field_names)]
