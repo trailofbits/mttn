@@ -351,7 +351,7 @@ impl<'a> Tracee<'a> {
     }
 
     /// Reads a piece of the tracee's memory, starting at `addr`.
-    fn tracee_data(&self, addr: u64, mask: MemoryMask) -> Result<u64> {
+    fn tracee_data(&self, addr: u64, mask: MemoryMask) -> Result<Vec<u8>> {
         log::debug!("attempting to read tracee @ 0x{:x} ({:?})", addr, mask);
 
         // NOTE(ww): Could probably use ptrace::read() here since we're always <= 64 bits,
@@ -383,12 +383,7 @@ impl<'a> Tracee<'a> {
             log::debug!("fetched data bytes: {:?}", bytes);
         }
 
-        Ok(match mask {
-            MemoryMask::Byte => bytes[0] as u64,
-            MemoryMask::Word => u16::from_le_bytes(bytes.as_slice().try_into()?) as u64,
-            MemoryMask::DWord => u32::from_le_bytes(bytes.as_slice().try_into()?) as u64,
-            MemoryMask::QWord => u64::from_le_bytes(bytes.as_slice().try_into()?) as u64,
-        })
+        Ok(bytes)
     }
 
     /// Given a string instruction (e.g., `MOVS`, `LODS`) variant, return its
