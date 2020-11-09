@@ -349,7 +349,7 @@ impl<'a> Tracee<'a> {
             _ => {
                 bytes.truncate(instr.len());
                 Ok((instr, bytes))
-            },
+            }
         }
     }
 
