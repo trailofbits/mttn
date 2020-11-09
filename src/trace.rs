@@ -307,7 +307,7 @@ impl<'a> Tracee<'a> {
 
         #[allow(clippy::redundant_field_names)]
         Ok(Step {
-            instr: instr_bytes[0..instr.len()].to_vec(),
+            instr: instr_bytes,
             regs: self.register_file,
             hints: hints,
         })
@@ -346,7 +346,10 @@ impl<'a> Tracee<'a> {
 
         match instr.code() {
             Code::INVALID => Err(anyhow!("invalid instruction")),
-            _ => Ok((instr, bytes)),
+            _ => {
+                bytes.truncate(instr.len());
+                Ok((instr, bytes))
+            },
         }
     }
 
