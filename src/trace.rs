@@ -3,6 +3,7 @@ use iced_x86::{
     Code, Decoder, DecoderOptions, Instruction, InstructionInfoFactory, InstructionInfoOptions,
     MemorySize, Mnemonic, OpAccess, Register,
 };
+use nix::sys::personality::{self, Persona};
 use nix::sys::ptrace;
 use nix::sys::signal;
 use nix::sys::uio;
@@ -12,16 +13,37 @@ use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
 use std::convert::{TryFrom, TryInto};
+use std::io;
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 const MAX_INSTR_LEN: usize = 15;
+
+pub trait CommandPersonality {
+    fn personality(&mut self, persona: Persona);
+}
+
+impl CommandPersonality for Command {
+    fn personality(&mut self, persona: Persona) {
+        unsafe {
+            self.pre_exec(move || match personality::set(persona) {
+                Ok(_) => Ok(()),
+                Err(nix::Error::Sys(e)) => Err(io::Error::from_raw_os_error(e as i32)),
+                Err(_) => Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "unknown personality error",
+                )),
+            })
+        };
+    }
+}
 
 /// Represents the width of a concrete memory operation.
 ///
 /// All `mttn` memory operations are 1, 2, 4, or 8 bytes.
 /// Larger operations are either modeled as multiple individual operations
 /// (if caused by a `REP` prefix), ignored (if configured), or cause a fatal error.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum MemoryMask {
     Byte = 1,
     Word = 2,
@@ -65,7 +87,7 @@ pub enum MemoryOp {
 
 /// Represents an entire traced memory operation, including its kind (`MemoryOp`),
 /// size (`MemoryMask`), concrete address, and actual read or written data.
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct MemoryHint {
     address: u64,
     operation: MemoryOp,
@@ -76,7 +98,7 @@ pub struct MemoryHint {
 /// Represents an individual step in the trace, including the raw instruction bytes,
 /// the register file state before execution, and any memory operations that result
 /// from execution.
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct Step {
     instr: Vec<u8>,
     regs: RegisterFile,
@@ -88,7 +110,7 @@ pub struct Step {
 /// Only the standard addressable registers, plus `RFLAGS`, are tracked.
 /// `mttn` assumes that all segment base addresses are `0` and therefore doesn't
 /// track them.
-#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct RegisterFile {
     rax: u64,
     rbx: u64,
@@ -538,6 +560,7 @@ impl Iterator for Tracee<'_> {
 pub struct Tracer {
     pub ignore_unsupported_memops: bool,
     pub debug_on_fault: bool,
+    pub disable_aslr: bool,
     pub bitness: u32,
     pub target: Target,
 }
@@ -560,6 +583,7 @@ impl From<clap::ArgMatches<'_>> for Tracer {
         Self {
             ignore_unsupported_memops: matches.is_present("ignore-unsupported-memops"),
             debug_on_fault: matches.is_present("debug-on-fault"),
+            disable_aslr: matches.is_present("disable-aslr"),
             bitness: matches.value_of("mode").unwrap().parse().unwrap(),
             target: target,
         }
@@ -570,7 +594,16 @@ impl Tracer {
     pub fn trace(&self) -> Result<Tracee> {
         let tracee_pid = match &self.target {
             Target::Program(name, args) => {
-                let child = Command::new(name).args(args).spawn_ptrace()?;
+                let child = {
+                    let mut cmd = Command::new(name);
+                    cmd.args(args);
+
+                    if self.disable_aslr {
+                        cmd.personality(Persona::ADDR_NO_RANDOMIZE);
+                    }
+
+                    cmd.spawn_ptrace()?
+                };
 
                 log::debug!("spawned {} for tracing as child {}", name, child.id());
 
@@ -594,13 +627,48 @@ impl Tracer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced_x86::UsedMemory;
+    use std::path::PathBuf;
 
     fn dummy_regs() -> RegisterFile {
         RegisterFile {
             rax: 0x9900aabbccddeeff,
             rdi: 0x00000000feedface,
             ..Default::default()
+        }
+    }
+
+    fn build_test_program(program: &str) -> String {
+        let mut buf = {
+            let mut buf = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            buf.push("test");
+
+            buf
+        };
+
+        let status = Command::new("make")
+            .arg("-C")
+            .arg(&buf)
+            .arg(program)
+            .status()
+            .expect(&format!("build failed: {}", program));
+
+        if !status.success() {
+            panic!("build failed: {}", program);
+        }
+
+        buf.push(program);
+        buf.into_os_string().into_string().unwrap()
+    }
+
+    fn test_program_tracer(program: &str) -> Tracer {
+        let target = Target::Program(program.into(), vec![]);
+
+        Tracer {
+            ignore_unsupported_memops: false,
+            debug_on_fault: false,
+            disable_aslr: true,
+            bitness: 32,
+            target: target,
         }
     }
 
@@ -631,5 +699,31 @@ mod tests {
 
         // Unaddressable and unsupported registers return an Err.
         assert!(regs.value(Register::ST0).is_err());
+    }
+
+    #[test]
+    fn test_trace_consistency() {
+        for program in &["memops.elf", "stosb.elf", "stosw.elf", "stosd.elf"] {
+            let program = build_test_program(program);
+            let tracer = test_program_tracer(&program);
+
+            // TODO(ww): Don't collect these.
+            let trace1 = tracer
+                .trace()
+                .expect("spawn failed")
+                .collect::<Result<Vec<Step>>>()
+                .expect("trace failed");
+
+            let trace2 = tracer
+                .trace()
+                .expect("spawn failed")
+                .collect::<Result<Vec<Step>>>()
+                .expect("trace failed");
+
+            assert_eq!(trace1, trace2);
+            for (step1, step2) in trace1.iter().zip(trace2.iter()) {
+                assert_eq!(step1, step2);
+            }
+        }
     }
 }
