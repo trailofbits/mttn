@@ -237,6 +237,16 @@ impl From<libc::user_regs_struct> for RegisterFile {
     }
 }
 
+/// Represents a valid target for a `Tracer`.
+///
+/// The currently valid targets are `Program`s (which haven't been spawned yet)
+/// and already-spawned `Process`es.
+#[derive(Debug)]
+pub enum Target {
+    Program(String, Vec<String>),
+    Process(Pid),
+}
+
 /// Represents an actively traced program, in some indeterminate state.
 ///
 /// Tracees are associated with their parent `Tracer`.
@@ -529,47 +539,46 @@ pub struct Tracer {
     pub ignore_unsupported_memops: bool,
     pub debug_on_fault: bool,
     pub bitness: u32,
-    pub tracee_pid: Option<Pid>,
-    pub tracee_name: Option<String>,
-    pub tracee_args: Vec<String>,
+    pub target: Target,
 }
 
 impl From<clap::ArgMatches<'_>> for Tracer {
     fn from(matches: clap::ArgMatches) -> Self {
+        let target = if let Some(pid) = matches.value_of("tracee-pid") {
+            Target::Process(Pid::from_raw(pid.parse().unwrap()))
+        } else {
+            Target::Program(
+                matches.value_of("tracee-name").map(Into::into).unwrap(),
+                matches
+                    .values_of("tracee-args")
+                    .map(|v| v.map(|a| a.to_string()).collect())
+                    .unwrap_or_else(Vec::new),
+            )
+        };
+
         Self {
             ignore_unsupported_memops: matches.is_present("ignore-unsupported-memops"),
             debug_on_fault: matches.is_present("debug-on-fault"),
             bitness: matches.value_of("mode").unwrap().parse().unwrap(),
-            tracee_pid: matches
-                .value_of("tracee-pid")
-                .map(|p| Pid::from_raw(p.parse().unwrap())),
-            tracee_name: matches.value_of("tracee-name").map(Into::into),
-            tracee_args: matches
-                .values_of("tracee-args")
-                .map(|v| v.map(|a| a.to_string()).collect())
-                .unwrap_or_else(Vec::new),
+            target: target,
         }
     }
 }
 
 impl Tracer {
     pub fn trace(&self) -> Result<Tracee> {
-        let tracee_pid = if let Some(tracee_name) = &self.tracee_name {
-            let child = Command::new(&tracee_name)
-                .args(&self.tracee_args)
-                .spawn_ptrace()?;
+        let tracee_pid = match &self.target {
+            Target::Program(name, args) => {
+                let child = Command::new(name).args(args).spawn_ptrace()?;
 
-            log::debug!(
-                "spawned {} for tracing as child {}",
-                tracee_name,
-                child.id()
-            );
+                log::debug!("spawned {} for tracing as child {}", name, child.id());
 
-            Pid::from_raw(child.id() as i32)
-        } else {
-            let tracee_pid = self.tracee_pid.unwrap();
-            ptrace::attach(tracee_pid)?;
-            tracee_pid
+                Pid::from_raw(child.id() as i32)
+            }
+            Target::Process(pid) => {
+                ptrace::attach(*pid)?;
+                *pid
+            }
         };
 
         // Our tracee is now live and ready to be traced, but in a stopped state.
