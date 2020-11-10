@@ -556,6 +556,7 @@ impl From<clap::ArgMatches<'_>> for Tracer {
             )
         };
 
+        #[allow(clippy::redundant_field_names)]
         Self {
             ignore_unsupported_memops: matches.is_present("ignore-unsupported-memops"),
             debug_on_fault: matches.is_present("debug-on-fault"),
