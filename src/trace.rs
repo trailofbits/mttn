@@ -701,29 +701,40 @@ mod tests {
         assert!(regs.value(Register::ST0).is_err());
     }
 
-    #[test]
-    fn test_trace_consistency() {
-        for program in &["memops.elf", "stosb.elf", "stosw.elf", "stosd.elf"] {
-            let program = build_test_program(program);
-            let tracer = test_program_tracer(&program);
+    macro_rules! trace_consistency_tests {
+        ($($name:ident,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let program = build_test_program(concat!(stringify!($name), ".elf"));
+                    let tracer = test_program_tracer(&program);
 
-            // TODO(ww): Don't collect these.
-            let trace1 = tracer
-                .trace()
-                .expect("spawn failed")
-                .collect::<Result<Vec<Step>>>()
-                .expect("trace failed");
+                    // TODO(ww): Don't collect these.
+                    let trace1 = tracer
+                        .trace()
+                        .expect("spawn failed")
+                        .collect::<Result<Vec<Step>>>()
+                        .expect("trace failed");
 
-            let trace2 = tracer
-                .trace()
-                .expect("spawn failed")
-                .collect::<Result<Vec<Step>>>()
-                .expect("trace failed");
+                    let trace2 = tracer
+                        .trace()
+                        .expect("spawn failed")
+                        .collect::<Result<Vec<Step>>>()
+                        .expect("trace failed");
 
-            assert_eq!(trace1, trace2);
-            for (step1, step2) in trace1.iter().zip(trace2.iter()) {
-                assert_eq!(step1, step2);
-            }
+                    assert_eq!(trace1.len(), trace2.len());
+                    for (step1, step2) in trace1.iter().zip(trace2.iter()) {
+                        assert_eq!(step1, step2);
+                    }
+                }
+            )*
         }
+    }
+
+    trace_consistency_tests! {
+        memops,
+        stosb,
+        stosw,
+        stosd,
     }
 }
