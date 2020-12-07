@@ -38,3 +38,14 @@ Once you have the appropriate environment, just `cargo build`:
 $ cargo build
 $ ./target/debug/mttn -h
 ```
+
+### Testing
+
+*mttn*'s tests require some system depedencies to build test binaries with:
+`nasm`, (GNU) `ld`, and (GNU) `make`.
+
+Once you have those installed, running the tests should be as simple as:
+
+```bash
+$ cargo test
+```

@@ -31,6 +31,12 @@ fn app<'a, 'b>() -> App<'a, 'b> {
                 .long("debug-on-fault"),
         )
         .arg(
+            Arg::with_name("disable-aslr")
+                .help("Disable ASLR on the tracee")
+                .short("a")
+                .long("disable-aslr"),
+        )
+        .arg(
             Arg::with_name("tracee-pid")
                 .help("Attach to the given PID for tracing")
                 .short("a")

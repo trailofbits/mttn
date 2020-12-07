@@ -26,6 +26,9 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
+    - name: System deps
+      run: sudo apt install -y nasm
+
     - name: Build
       run: cargo build
 
