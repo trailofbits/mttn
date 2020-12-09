@@ -177,7 +177,7 @@ dependencies = [
 [[package]]
 name = "nix"
 version = "0.19.0"
-source = "git+https://github.com/trailofbits/nix?branch=ww/personality#328a23093edb90a96eb5a12a8010c92949a5189d"
+source = "git+https://github.com/trailofbits/nix?branch=ww/personality#308b4af1ecc825ca3ae6d156c9c149fb0a552e70"
 dependencies = [
  "bitflags",
  "cc",
