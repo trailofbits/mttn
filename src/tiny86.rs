@@ -29,7 +29,7 @@ impl Tiny86Write for MemoryHint {
         // to be a `const fn` and Rust (as of 1.48) doesn't support those in traits or trait
         // impls yet.
         let nothing = vec![0u8; Self::serialized_size()];
-        w.write(&nothing)?;
+        w.write_all(&nothing)?;
 
         Ok(())
     }
@@ -45,8 +45,8 @@ impl Tiny86Write for MemoryHint {
         let mut packed: u8 = self.mask as u8;
         packed |= (self.operation as u8) << 2;
 
-        w.write(&[packed])?;
-        w.write(&(self.address as u32).to_le_bytes())?;
+        w.write_all(&[packed])?;
+        w.write_all(&(self.address as u32).to_le_bytes())?;
 
         if self.data.len() > TINY86_MAX_HINT_DATA_LEN {
             return Err(anyhow!(
@@ -61,7 +61,7 @@ impl Tiny86Write for MemoryHint {
         let mut data = vec![0u8; TINY86_MAX_HINT_DATA_LEN];
         data.splice(..self.data.len(), self.data.iter().cloned());
 
-        w.write(&data)?;
+        w.write_all(&data)?;
 
         Ok(())
     }
@@ -79,25 +79,25 @@ impl Tiny86Write for RegisterFile {
 
     fn pad_write(w: &mut impl Write) -> Result<()> {
         let nothing = vec![0u8; Self::serialized_size()];
-        w.write(&nothing)?;
+        w.write_all(&nothing)?;
 
         Ok(())
     }
 
     fn tiny86_write(&self, w: &mut impl Write) -> Result<()> {
         // GPRs.
-        w.write(&(self.rax as u32).to_le_bytes())?;
-        w.write(&(self.rbx as u32).to_le_bytes())?;
-        w.write(&(self.rcx as u32).to_le_bytes())?;
-        w.write(&(self.rdx as u32).to_le_bytes())?;
-        w.write(&(self.rsi as u32).to_le_bytes())?;
-        w.write(&(self.rdi as u32).to_le_bytes())?;
-        w.write(&(self.rsp as u32).to_le_bytes())?;
-        w.write(&(self.rbp as u32).to_le_bytes())?;
+        w.write_all(&(self.rax as u32).to_le_bytes())?;
+        w.write_all(&(self.rbx as u32).to_le_bytes())?;
+        w.write_all(&(self.rcx as u32).to_le_bytes())?;
+        w.write_all(&(self.rdx as u32).to_le_bytes())?;
+        w.write_all(&(self.rsi as u32).to_le_bytes())?;
+        w.write_all(&(self.rdi as u32).to_le_bytes())?;
+        w.write_all(&(self.rsp as u32).to_le_bytes())?;
+        w.write_all(&(self.rbp as u32).to_le_bytes())?;
 
         // EIP and EFLAGS.
-        w.write(&(self.rip as u32).to_le_bytes())?;
-        w.write(&(self.rflags as u32).to_le_bytes())?;
+        w.write_all(&(self.rip as u32).to_le_bytes())?;
+        w.write_all(&(self.rflags as u32).to_le_bytes())?;
 
         Ok(())
     }
@@ -115,7 +115,7 @@ impl Tiny86Write for Step {
 
     fn pad_write(w: &mut impl Write) -> Result<()> {
         let nothing = [0x90u8; TINY86_MAX_INSTR_LEN];
-        w.write(&nothing)?;
+        w.write_all(&nothing)?;
 
         RegisterFile::pad_write(w)?;
         MemoryHint::pad_write(w)?;
@@ -136,7 +136,7 @@ impl Tiny86Write for Step {
         let mut instr = vec![0x90u8; TINY86_MAX_INSTR_LEN];
         instr.splice(..self.instr.len(), self.instr.iter().cloned());
 
-        w.write(&instr)?;
+        w.write_all(&instr)?;
 
         self.regs.tiny86_write(w)?;
 
