@@ -1,14 +1,28 @@
 use anyhow::Result;
 use clap::{App, Arg, ArgGroup};
 
+use std::io::stdout;
 use std::process;
 
+mod tiny86;
 mod trace;
+
+use tiny86::Tiny86Write;
+use trace::Step;
 
 fn app<'a, 'b>() -> App<'a, 'b> {
     App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
+        .arg(
+            Arg::with_name("output-format")
+                .help("The output format to use")
+                .short("F")
+                .long("format")
+                .takes_value(true)
+                .possible_values(&["json", "tiny86"])
+                .default_value("json"),
+        )
         .arg(
             Arg::with_name("mode")
                 .help("The CPU mode to decode instructions with")
@@ -33,7 +47,7 @@ fn app<'a, 'b>() -> App<'a, 'b> {
         .arg(
             Arg::with_name("disable-aslr")
                 .help("Disable ASLR on the tracee")
-                .short("a")
+                .short("A")
                 .long("disable-aslr"),
         )
         .arg(
@@ -61,10 +75,16 @@ fn app<'a, 'b>() -> App<'a, 'b> {
 }
 
 fn run() -> Result<()> {
-    let tracer = trace::Tracer::from(app().get_matches());
+    let matches = app().get_matches();
+    let tracer = trace::Tracer::from(&matches);
 
-    let traces = tracer.trace()?.collect::<Result<Vec<trace::Step>>>()?;
-    serde_json::to_writer(std::io::stdout(), &traces)?;
+    let mut traces = tracer.trace()?;
+
+    match matches.value_of("output-format").unwrap() {
+        "json" => serde_json::to_writer(stdout(), &traces.collect::<Result<Vec<Step>>>()?)?,
+        "tiny86" => traces.try_for_each(|s| s?.tiny86_write(&mut stdout()))?,
+        _ => unreachable!(),
+    };
 
     Ok(())
 }
