@@ -44,11 +44,23 @@ impl CommandPersonality for Command {
 /// Larger operations are either modeled as multiple individual operations
 /// (if caused by a `REP` prefix), ignored (if configured), or cause a fatal error.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[repr(u8)]
 pub enum MemoryMask {
-    Byte = 1,
-    Word = 2,
-    DWord = 4,
-    QWord = 8,
+    Byte,
+    Word,
+    DWord,
+    QWord,
+}
+
+impl MemoryMask {
+    pub fn as_size(&self) -> usize {
+        match *self {
+            MemoryMask::Byte => 1,
+            MemoryMask::Word => 2,
+            MemoryMask::DWord => 4,
+            MemoryMask::QWord => 8,
+        }
+    }
 }
 
 impl TryFrom<u64> for MemoryMask {
@@ -80,6 +92,7 @@ impl TryFrom<Register> for MemoryMask {
 /// Instructions that perform conditional reads or writes are modeled only
 /// if the conditional memory operation actually took place during the trace.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[repr(u8)]
 pub enum MemoryOp {
     Read,
     Write,
@@ -87,12 +100,12 @@ pub enum MemoryOp {
 
 /// Represents an entire traced memory operation, including its kind (`MemoryOp`),
 /// size (`MemoryMask`), concrete address, and actual read or written data.
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MemoryHint {
-    address: u64,
-    operation: MemoryOp,
-    mask: MemoryMask,
-    data: Vec<u8>,
+    pub address: u64,
+    pub operation: MemoryOp,
+    pub mask: MemoryMask,
+    pub data: Vec<u8>,
 }
 
 /// Represents an individual step in the trace, including the raw instruction bytes,
@@ -100,9 +113,9 @@ pub struct MemoryHint {
 /// from execution.
 #[derive(Debug, PartialEq, Serialize)]
 pub struct Step {
-    instr: Vec<u8>,
-    regs: RegisterFile,
-    hints: Vec<MemoryHint>,
+    pub instr: Vec<u8>,
+    pub regs: RegisterFile,
+    pub hints: Vec<MemoryHint>,
 }
 
 /// Represents the (usermode) register file.
@@ -112,26 +125,26 @@ pub struct Step {
 /// track them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct RegisterFile {
-    rax: u64,
-    rbx: u64,
-    rcx: u64,
-    rdx: u64,
-    rsi: u64,
-    rdi: u64,
-    rsp: u64,
-    rbp: u64,
-    r8: u64,
-    r9: u64,
-    r10: u64,
-    r11: u64,
-    r12: u64,
-    r13: u64,
-    r14: u64,
-    r15: u64,
-    rip: u64,
-    rflags: u64,
-    fs_base: u64,
-    gs_base: u64,
+    pub rax: u64,
+    pub rbx: u64,
+    pub rcx: u64,
+    pub rdx: u64,
+    pub rsi: u64,
+    pub rdi: u64,
+    pub rsp: u64,
+    pub rbp: u64,
+    pub r8: u64,
+    pub r9: u64,
+    pub r10: u64,
+    pub r11: u64,
+    pub r12: u64,
+    pub r13: u64,
+    pub r14: u64,
+    pub r15: u64,
+    pub rip: u64,
+    pub rflags: u64,
+    pub fs_base: u64,
+    pub gs_base: u64,
 }
 
 impl RegisterFile {
@@ -391,10 +404,10 @@ impl<'a> Tracee<'a> {
 
         // NOTE(ww): Could probably use ptrace::read() here since we're always <= 64 bits,
         // but I find process_vm_readv a little more readable.
-        let mut bytes = vec![0u8; mask as usize];
+        let mut bytes = vec![0u8; mask.as_size()];
         let remote_iov = uio::RemoteIoVec {
             base: addr as usize,
-            len: mask as usize,
+            len: mask.as_size(),
         };
 
         // NOTE(ww): A failure here indicates a bug in the tracer, not the tracee.
@@ -565,8 +578,8 @@ pub struct Tracer {
     pub target: Target,
 }
 
-impl From<clap::ArgMatches<'_>> for Tracer {
-    fn from(matches: clap::ArgMatches) -> Self {
+impl From<&clap::ArgMatches<'_>> for Tracer {
+    fn from(matches: &clap::ArgMatches) -> Self {
         let target = if let Some(pid) = matches.value_of("tracee-pid") {
             Target::Process(Pid::from_raw(pid.parse().unwrap()))
         } else {
