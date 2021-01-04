@@ -11,7 +11,7 @@ env_logger = "0.8"
 iced-x86 = "1.10.0"
 libc = "0.2"
 log = "0.4"
-nix = { git = "https://github.com/trailofbits/nix", branch = "ww/personality" }
+nix = { git = "https://github.com/nix-rust/nix", rev = "c0c5570" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 spawn-ptrace = "0.1.2"
