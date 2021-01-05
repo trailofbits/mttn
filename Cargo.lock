@@ -20,9 +20,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.35"
+version = "1.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c0df63cb2955042487fad3aefd2c6e3ae7389ac5dc1beb28921de0b69f779d4"
+checksum = "ee67c11feeac938fae061b232e38e0b6d94f97a9df10e6271319325ac4c56a86"
 
 [[package]]
 name = "atty"
@@ -177,7 +177,7 @@ dependencies = [
 [[package]]
 name = "nix"
 version = "0.19.0"
-source = "git+https://github.com/trailofbits/nix?branch=ww/personality#2359b0e9a0916f4df5a65200b0f0fa194df4ac63"
+source = "git+https://github.com/nix-rust/nix?rev=c0c5570#c0c55700df23cf4a8b2d1f0f7f4a06b013dab59a"
 dependencies = [
  "bitflags",
  "cc",
