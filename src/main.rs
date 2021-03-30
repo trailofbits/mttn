@@ -39,6 +39,12 @@ fn app<'a, 'b>() -> App<'a, 'b> {
                 .long("ignore-unsupported-memops"),
         )
         .arg(
+            Arg::with_name("tiny86-only")
+                .help("Fail if the tracer encounters x86 functionality that Tiny86 doesn't support")
+                .short("t")
+                .long("tiny86-only"),
+        )
+        .arg(
             Arg::with_name("debug-on-fault")
                 .help("Suspend the tracee and detach if a memory access faults")
                 .short("d")

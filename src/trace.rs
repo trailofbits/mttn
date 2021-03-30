@@ -313,6 +313,10 @@ impl<'a> Tracee<'a> {
         self.tracee_regs()?;
         let (instr, instr_bytes) = self.tracee_instr()?;
 
+        if self.tracer.tiny86_only {
+            self.tiny86_checks(&instr)?;
+        }
+
         // TODO(ww): Check `instr` here and perform one of two cases:
         // 1. If `instr` is an instruction that benefits from modeling/emulation
         //    (e.g. `MOVS`), then emulate it and generate its memory hints
@@ -555,6 +559,28 @@ impl<'a> Tracee<'a> {
 
         Ok(())
     }
+
+    fn tiny86_checks(&self, instr: &Instruction) -> Result<()> {
+        let info = instr.op_code();
+
+        // Tiny86 instructions must be valid in a 32-bit mode.
+        if !info.mode32() {
+            return Err(anyhow!(
+                "Tiny86 invariant failure: {:?} is not valid in 32-bit mode",
+                &instr
+            ));
+        }
+
+        // We don't support 16-bit addressing in Tiny86.
+        if info.address_size() != 32 {
+            return Err(anyhow!(
+                "Tiny86 invariant failure: non 32-bit addressing is not supported ({:?})",
+                &instr
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 impl Iterator for Tracee<'_> {
@@ -572,6 +598,7 @@ impl Iterator for Tracee<'_> {
 #[derive(Debug)]
 pub struct Tracer {
     pub ignore_unsupported_memops: bool,
+    pub tiny86_only: bool,
     pub debug_on_fault: bool,
     pub disable_aslr: bool,
     pub bitness: u32,
@@ -595,6 +622,7 @@ impl From<&clap::ArgMatches<'_>> for Tracer {
         #[allow(clippy::redundant_field_names)]
         Self {
             ignore_unsupported_memops: matches.is_present("ignore-unsupported-memops"),
+            tiny86_only: matches.is_present("tiny86-only"),
             debug_on_fault: matches.is_present("debug-on-fault"),
             disable_aslr: matches.is_present("disable-aslr"),
             bitness: matches.value_of("mode").unwrap().parse().unwrap(),
@@ -678,6 +706,7 @@ mod tests {
 
         Tracer {
             ignore_unsupported_memops: false,
+            tiny86_only: false,
             debug_on_fault: false,
             disable_aslr: true,
             bitness: 32,
