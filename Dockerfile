@@ -1,4 +1,4 @@
-FROM rust:1.49
+FROM rust:1.51
 
 RUN apt update && apt install -y nasm gdb
 
