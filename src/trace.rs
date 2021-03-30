@@ -706,6 +706,7 @@ mod tests {
 
         Tracer {
             ignore_unsupported_memops: false,
+            tiny86_only: false,
             debug_on_fault: false,
             disable_aslr: true,
             bitness: 32,
