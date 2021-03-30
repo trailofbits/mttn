@@ -572,7 +572,9 @@ impl<'a> Tracee<'a> {
         }
 
         // We don't support 16-bit addressing in Tiny86.
-        if info.address_size() != 32 {
+        // NOTE(ww): Checking != 32 doesn't work here, since address_size() can be
+        // 0 for instructions that don't require any addressing.
+        if info.address_size() == 16 {
             return Err(anyhow!(
                 "Tiny86 invariant failure: non 32-bit addressing is not supported ({:?})",
                 &instr
