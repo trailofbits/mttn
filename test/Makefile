@@ -2,7 +2,8 @@ TESTS := \
 	memops \
 	stosb \
 	stosw \
-	stosd
+	stosd \
+	alu_adc
 
 ASMS := $(TESTS:=.s)
 OBJS := $(TESTS:=.o)
