@@ -3,7 +3,8 @@ TESTS := \
 	stosb \
 	stosw \
 	stosd \
-	alu_adc
+	alu_adc \
+	alu_add_neg
 
 ASMS := $(TESTS:=.s)
 OBJS := $(TESTS:=.o)
