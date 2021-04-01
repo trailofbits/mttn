@@ -780,5 +780,7 @@ mod tests {
         stosb,
         stosw,
         stosd,
+        alu_adc,
+        alu_add_neg,
     }
 }
