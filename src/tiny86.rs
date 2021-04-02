@@ -39,11 +39,13 @@ impl Tiny86Write for MemoryHint {
         //
         // |  7     6     5     4     3  |  2  |  1     0    |
         // |==================================================
-        // |          reserved           | r/w |    mask     |
+        // |  1  |    reserved           | r/w |    mask     |
         // |=================================================|
         // |  7     6     5     4     3  |  2  |  1     0    |
+        //
+        // The high bit is always 1, to indicate a valid memory hint.
         let mut packed: u8 = self.mask as u8;
-        packed |= (self.operation as u8) << 2;
+        packed |= ((self.operation as u8) << 2) | 0x80;
 
         w.write_all(&[packed])?;
         w.write_all(&(self.address as u32).to_le_bytes())?;
@@ -217,7 +219,7 @@ mod tests {
     fn dword_hint_asserts(hint_bytes: &[u8]) {
         assert_eq!(
             &hint_bytes[..MemoryHint::serialized_size()],
-            vec![0b110, 0xcd, 0xcd, 0xcd, 0xcd, 0x41, 0x41, 0x41, 0x41]
+            vec![0b10000110, 0xcd, 0xcd, 0xcd, 0xcd, 0x41, 0x41, 0x41, 0x41]
         );
     }
 
@@ -248,7 +250,7 @@ mod tests {
 
             assert_eq!(
                 buf,
-                vec![0b101, 0xcd, 0xcd, 0xcd, 0xcd, 0xcc, 0xcc, 0x00, 0x00]
+                vec![0b10000101, 0xcd, 0xcd, 0xcd, 0xcd, 0xcc, 0xcc, 0x00, 0x00]
             );
         }
 
