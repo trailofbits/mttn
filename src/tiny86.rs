@@ -14,6 +14,10 @@ pub trait Tiny86Write {
     fn tiny86_write(&self, w: &mut impl Write) -> Result<()>;
 }
 
+pub trait Bitstring {
+    fn bitstring(&self) -> Result<String>;
+}
+
 /// A Tiny86 memory hint is serialized as three fields, in order:
 ///
 /// 0. Operation mask and width (1 byte)
@@ -164,6 +168,23 @@ impl Tiny86Write for Step {
         }
 
         Ok(())
+    }
+}
+
+impl<T> Bitstring for T
+where
+    T: Tiny86Write,
+{
+    fn bitstring(&self) -> Result<String> {
+        let mut buf = vec![];
+        self.tiny86_write(&mut buf)?;
+
+        // Probably not the fastest.
+        Ok(buf
+            .iter()
+            .map(|b| format!("{:08b}", b))
+            .collect::<Vec<_>>()
+            .concat())
     }
 }
 
