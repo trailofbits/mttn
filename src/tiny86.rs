@@ -320,19 +320,19 @@ mod tests {
 
             assert_eq!(buf.len(), Step::serialized_size());
 
+            // First, two empty memory hints.
+            let mut off = MemoryHint::serialized_size() * 2;
+            assert_eq!(&buf[0..off], vec![0; off]);
+
+            // Next, the register file.
+            regfile_asserts(&buf[off..]);
+            off += RegisterFile::serialized_size();
+
             // The instruction is a RET, padded out with NOPs.
             assert_eq!(*buf.last().unwrap(), 0xc3);
             assert_eq!(
-                &buf[0..TINY86_MAX_INSTR_LEN - 1],
+                &buf[off..(off + TINY86_MAX_INSTR_LEN - 1)],
                 vec![0x90; TINY86_MAX_INSTR_LEN - 1]
-            );
-
-            regfile_asserts(&buf[TINY86_MAX_INSTR_LEN..]);
-
-            // Two empty memory hints.
-            assert_eq!(
-                &buf[(TINY86_MAX_INSTR_LEN + RegisterFile::serialized_size())..],
-                vec![0; MemoryHint::serialized_size() * 2]
             );
         }
 
@@ -346,17 +346,23 @@ mod tests {
 
             assert_eq!(buf.len(), Step::serialized_size());
 
-            // The instruction is a RET, padded out with NOPs.
-            assert_eq!(buf[0], 0xc3);
+            // One memory hint, followed by empty padding.
+            dword_hint_asserts(&buf);
+            let mut off = MemoryHint::serialized_size() * 2;
             assert_eq!(
-                &buf[1..TINY86_MAX_INSTR_LEN],
-                vec![0x90; TINY86_MAX_INSTR_LEN - 1]
+                &buf[MemoryHint::serialized_size()..off],
+                vec![0; MemoryHint::serialized_size()]
             );
 
-            regfile_asserts(&buf[TINY86_MAX_INSTR_LEN..]);
+            regfile_asserts(&buf[off..]);
+            off += RegisterFile::serialized_size();
 
-            // One memory hint, followed by empty padding.
-            dword_hint_asserts(&buf[(TINY86_MAX_INSTR_LEN + RegisterFile::serialized_size())..]);
+            // The instruction is a RET, padded out with NOPs.
+            assert_eq!(*buf.last().unwrap(), 0xc3);
+            assert_eq!(
+                &buf[off..(off + TINY86_MAX_INSTR_LEN - 1)],
+                vec![0x90; TINY86_MAX_INSTR_LEN - 1]
+            );
         }
 
         // Two hints: both are filled
@@ -369,21 +375,19 @@ mod tests {
 
             assert_eq!(buf.len(), Step::serialized_size());
 
-            // The instruction is a RET, padded out with NOPs.
-            assert_eq!(buf[0], 0xc3);
-            assert_eq!(
-                &buf[1..TINY86_MAX_INSTR_LEN],
-                vec![0x90; TINY86_MAX_INSTR_LEN - 1]
-            );
-
-            regfile_asserts(&buf[TINY86_MAX_INSTR_LEN..]);
-
             // Two valid memory hints.
-            dword_hint_asserts(&buf[(TINY86_MAX_INSTR_LEN + RegisterFile::serialized_size())..]);
-            dword_hint_asserts(
-                &buf[(TINY86_MAX_INSTR_LEN
-                    + RegisterFile::serialized_size()
-                    + MemoryHint::serialized_size())..],
+            dword_hint_asserts(&buf);
+            dword_hint_asserts(&buf[MemoryHint::serialized_size()..]);
+            let mut off = MemoryHint::serialized_size() * 2;
+
+            regfile_asserts(&buf[off..]);
+            off += RegisterFile::serialized_size();
+
+            // The instruction is a RET, padded out with NOPs.
+            assert_eq!(*buf.last().unwrap(), 0xc3);
+            assert_eq!(
+                &buf[off..(off + TINY86_MAX_INSTR_LEN - 1)],
+                vec![0x90; TINY86_MAX_INSTR_LEN - 1]
             );
         }
 
