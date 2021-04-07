@@ -1,13 +1,13 @@
 use anyhow::Result;
 use clap::{App, Arg, ArgGroup};
 
-use std::io::stdout;
+use std::io::{stdout, Write};
 use std::process;
 
 mod tiny86;
 mod trace;
 
-use tiny86::Tiny86Write;
+use tiny86::{Bitstring, Tiny86Write};
 use trace::Step;
 
 fn app<'a, 'b>() -> App<'a, 'b> {
@@ -20,7 +20,7 @@ fn app<'a, 'b>() -> App<'a, 'b> {
                 .short("F")
                 .long("format")
                 .takes_value(true)
-                .possible_values(&["json", "tiny86"])
+                .possible_values(&["json", "tiny86", "tiny86-text"])
                 .default_value("json"),
         )
         .arg(
@@ -89,6 +89,11 @@ fn run() -> Result<()> {
     match matches.value_of("output-format").unwrap() {
         "json" => serde_json::to_writer(stdout(), &traces.collect::<Result<Vec<Step>>>()?)?,
         "tiny86" => traces.try_for_each(|s| s?.tiny86_write(&mut stdout()))?,
+        "tiny86-text" => traces.try_for_each(|s| {
+            // TODO(ww): Clean this up.
+            s?.bitstring()
+                .and_then(|bs| Ok(writeln!(stdout(), "{}", bs)?))
+        })?,
         _ => unreachable!(),
     };
 
