@@ -52,7 +52,7 @@ impl Tiny86Write for MemoryHint {
         packed |= ((self.operation as u8) << 2) | 0x80;
 
         w.write_all(&[packed])?;
-        w.write_all(&(self.address as u32).to_le_bytes())?;
+        w.write_all(&(self.address as u32).to_be_bytes())?;
 
         if self.data.len() > TINY86_MAX_HINT_DATA_LEN {
             return Err(anyhow!(
@@ -92,18 +92,18 @@ impl Tiny86Write for RegisterFile {
 
     fn tiny86_write(&self, w: &mut impl Write) -> Result<()> {
         // GPRs.
-        w.write_all(&(self.rax as u32).to_le_bytes())?;
-        w.write_all(&(self.rbx as u32).to_le_bytes())?;
-        w.write_all(&(self.rcx as u32).to_le_bytes())?;
-        w.write_all(&(self.rdx as u32).to_le_bytes())?;
-        w.write_all(&(self.rsi as u32).to_le_bytes())?;
-        w.write_all(&(self.rdi as u32).to_le_bytes())?;
-        w.write_all(&(self.rsp as u32).to_le_bytes())?;
-        w.write_all(&(self.rbp as u32).to_le_bytes())?;
+        w.write_all(&(self.rax as u32).to_be_bytes())?;
+        w.write_all(&(self.rbx as u32).to_be_bytes())?;
+        w.write_all(&(self.rcx as u32).to_be_bytes())?;
+        w.write_all(&(self.rdx as u32).to_be_bytes())?;
+        w.write_all(&(self.rsi as u32).to_be_bytes())?;
+        w.write_all(&(self.rdi as u32).to_be_bytes())?;
+        w.write_all(&(self.rsp as u32).to_be_bytes())?;
+        w.write_all(&(self.rbp as u32).to_be_bytes())?;
 
         // EIP and EFLAGS.
-        w.write_all(&(self.rip as u32).to_le_bytes())?;
-        w.write_all(&(self.rflags as u32).to_le_bytes())?;
+        w.write_all(&(self.rip as u32).to_be_bytes())?;
+        w.write_all(&(self.rflags as u32).to_be_bytes())?;
 
         Ok(())
     }
@@ -114,18 +114,24 @@ impl Tiny86Write for RegisterFile {
 /// * The raw instruction bytes (padded out to a maximum of 12 using NOPs)
 /// * The register file
 /// * Two memory hints (one or more of which may be blank)
+///
+/// Observe that the order of serialization below is the reverse of the above,
+/// since these traces are consumed as bits starting with the instruction
+/// at bit 0. Observe also that multi-byte fields are in big-endian order,
+/// since that's what the circuit uses internally.
 impl Tiny86Write for Step {
     fn serialized_size() -> usize {
         TINY86_MAX_INSTR_LEN + RegisterFile::serialized_size() + (MemoryHint::serialized_size() * 2)
     }
 
     fn pad_write(w: &mut impl Write) -> Result<()> {
-        let nothing = [0x90u8; TINY86_MAX_INSTR_LEN];
-        w.write_all(&nothing)?;
+        MemoryHint::pad_write(w)?;
+        MemoryHint::pad_write(w)?;
 
         RegisterFile::pad_write(w)?;
-        MemoryHint::pad_write(w)?;
-        MemoryHint::pad_write(w)?;
+
+        let nothing = [0x90u8; TINY86_MAX_INSTR_LEN];
+        w.write_all(&nothing)?;
 
         Ok(())
     }
@@ -138,13 +144,6 @@ impl Tiny86Write for Step {
                 TINY86_MAX_INSTR_LEN
             ));
         }
-
-        let mut instr = vec![0x90u8; TINY86_MAX_INSTR_LEN];
-        instr.splice(..self.instr.len(), self.instr.iter().cloned());
-
-        w.write_all(&instr)?;
-
-        self.regs.tiny86_write(w)?;
 
         match self.hints.len() {
             0 => {
@@ -166,6 +165,14 @@ impl Tiny86Write for Step {
                 ));
             }
         }
+
+        self.regs.tiny86_write(w)?;
+
+        let mut instr = vec![0x90u8; TINY86_MAX_INSTR_LEN];
+        instr.splice(..self.instr.len(), self.instr.iter().cloned());
+        instr.reverse();
+
+        w.write_all(&instr)?;
 
         Ok(())
     }
