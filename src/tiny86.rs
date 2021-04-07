@@ -321,9 +321,9 @@ mod tests {
             assert_eq!(buf.len(), Step::serialized_size());
 
             // The instruction is a RET, padded out with NOPs.
-            assert_eq!(buf[0], 0xc3);
+            assert_eq!(*buf.last().unwrap(), 0xc3);
             assert_eq!(
-                &buf[1..TINY86_MAX_INSTR_LEN],
+                &buf[0..TINY86_MAX_INSTR_LEN - 1],
                 vec![0x90; TINY86_MAX_INSTR_LEN - 1]
             );
 
