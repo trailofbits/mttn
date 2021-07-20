@@ -13,7 +13,6 @@ use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
 use std::convert::{TryFrom, TryInto};
-use std::io;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
@@ -26,14 +25,7 @@ pub trait CommandPersonality {
 impl CommandPersonality for Command {
     fn personality(&mut self, persona: Persona) {
         unsafe {
-            self.pre_exec(move || match personality::set(persona) {
-                Ok(_) => Ok(()),
-                Err(nix::Error::Sys(e)) => Err(io::Error::from_raw_os_error(e as i32)),
-                Err(_) => Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "unknown personality error",
-                )),
-            })
+            self.pre_exec(move || personality::set(persona).map(|_| ()).map_err(|e| e.into()))
         };
     }
 }
