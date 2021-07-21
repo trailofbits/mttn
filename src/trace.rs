@@ -24,9 +24,7 @@ pub trait CommandPersonality {
 
 impl CommandPersonality for Command {
     fn personality(&mut self, persona: Persona) {
-        unsafe {
-            self.pre_exec(move || Ok(personality::set(persona).map(|_| ())?))
-        };
+        unsafe { self.pre_exec(move || Ok(personality::set(persona).map(|_| ())?)) };
     }
 }
 
