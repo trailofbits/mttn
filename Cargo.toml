@@ -8,7 +8,8 @@ edition = "2018"
 anyhow = "1.0"
 clap = "2.33"
 env_logger = "0.9"
-iced-x86 = "1.13.0"
+# TODO(ww): Stabilize once is_string_instruction has landed in a version
+iced-x86 = { git = "https://github.com/icedland/iced", rev = "c2944cd" }
 libc = "0.2"
 log = "0.4"
 nix = "0.22.0"

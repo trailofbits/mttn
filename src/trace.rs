@@ -13,7 +13,6 @@ use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
 use std::convert::{TryFrom, TryInto};
-use std::io;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
@@ -25,16 +24,7 @@ pub trait CommandPersonality {
 
 impl CommandPersonality for Command {
     fn personality(&mut self, persona: Persona) {
-        unsafe {
-            self.pre_exec(move || match personality::set(persona) {
-                Ok(_) => Ok(()),
-                Err(nix::Error::Sys(e)) => Err(io::Error::from_raw_os_error(e as i32)),
-                Err(_) => Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "unknown personality error",
-                )),
-            })
-        };
+        unsafe { self.pre_exec(move || Ok(personality::set(persona).map(|_| ())?)) };
     }
 }
 
@@ -330,6 +320,17 @@ impl<'a> Tracee<'a> {
 
         ptrace::step(self.tracee_pid, None)?;
 
+        if instr.is_string_instruction() {
+            // NOTE(ww): By default, recent-ish x86 CPUs execute MOVS and STOS
+            // in "fast string operation" mode. This can cause stores to not appear
+            // when we expect them to, since they can be executed out-of-order.
+            // The "correct" fix for this is probably to toggle the
+            // fast-string-enable bit (0b) in the IA32_MISC_ENABLE MSR, but we just sleep
+            // for a bit to give the CPU a chance to catch up.
+            // TODO(ww): Longer term, we should just model REP'd instructions outright.
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
         // ...then, after we've stepped the program, we fill in the data
         // associated with each Write hint in stage 2.
         self.tracee_hints_stage2(&mut hints)?;
@@ -538,15 +539,6 @@ impl<'a> Tracee<'a> {
 
     fn tracee_hints_stage2(&self, hints: &mut Vec<MemoryHint>) -> Result<()> {
         log::debug!("memory hints stage 2");
-
-        // NOTE(ww): By default, recent-ish x86 CPUs execute MOVS and STOS
-        // in "fast string operation" mode. This can cause stores to not appear
-        // when we expect them to, since they can be executed out-of-order.
-        // The "correct" fix for this is probably to toggle the
-        // fast-string-enable bit (0b) in the IA32_MISC_ENABLE MSR, but we just sleep
-        // for a bit to give the CPU a chance to catch up.
-        // TODO(ww): Longer term, we should just model REP'd instructions outright.
-        std::thread::sleep(std::time::Duration::from_millis(2));
 
         for hint in hints.iter_mut() {
             if hint.operation != MemoryOp::Write {
