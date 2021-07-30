@@ -291,7 +291,7 @@ impl<'a> Tracee<'a> {
         Self {
             terminated: false,
             tracee_pid: tracee_pid,
-            tracer: &tracer,
+            tracer: tracer,
             info_factory: InstructionInfoFactory::new(),
             register_file: Default::default(),
         }
@@ -474,7 +474,7 @@ impl<'a> Tracee<'a> {
 
         let info = self
             .info_factory
-            .info_options(&instr, InstructionInfoOptions::NO_REGISTER_USAGE)
+            .info_options(instr, InstructionInfoOptions::NO_REGISTER_USAGE)
             .clone();
 
         for used_mem in info.used_memory() {
@@ -496,7 +496,7 @@ impl<'a> Tracee<'a> {
                 MemorySize::UInt16 | MemorySize::Int16 => MemoryMask::Word,
                 MemorySize::UInt32 | MemorySize::Int32 => MemoryMask::DWord,
                 MemorySize::UInt64 | MemorySize::Int64 => MemoryMask::QWord,
-                MemorySize::Unknown => self.mask_from_str_instr(&instr)?,
+                MemorySize::Unknown => self.mask_from_str_instr(instr)?,
                 size => {
                     if self.tracer.ignore_unsupported_memops {
                         log::warn!(
@@ -655,7 +655,7 @@ impl Tracer {
         // finally exiting, giving us one last chance to do some inspection.
         ptrace::setoptions(tracee_pid, ptrace::Options::PTRACE_O_TRACEEXIT)?;
 
-        Ok(Tracee::new(tracee_pid, &self))
+        Ok(Tracee::new(tracee_pid, self))
     }
 }
 
