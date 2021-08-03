@@ -386,7 +386,11 @@ impl<'a> Tracee<'a> {
             &[remote_iov],
         )?;
 
-        log::debug!("fetched instruction bytes: {:?}", bytes);
+        log::debug!(
+            "fetched instruction bytes: {:?} from {:#x}",
+            bytes,
+            self.register_file.rip
+        );
 
         let mut decoder = Decoder::new(self.tracer.bitness, &bytes, DecoderOptions::NONE);
         decoder.set_ip(self.register_file.rip);
