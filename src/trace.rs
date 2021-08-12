@@ -482,6 +482,8 @@ impl<'a> Tracee<'a> {
             .clone();
 
         for used_mem in info.used_memory() {
+            log::debug!("{:?}", used_mem);
+
             // We model writebacks as two separate memory ops, so split them up here.
             // Also: all conditional reads and writes are in fact real reads and writes,
             // since we're single-stepping through REP'd instructions.
@@ -514,11 +516,19 @@ impl<'a> Tracee<'a> {
                 }
             };
 
-            let addr = used_mem
+            let mut addr = used_mem
                 .try_virtual_address(0, |reg, _, _| self.register_file.value(reg).ok())
                 .ok_or_else(|| anyhow!("effective address calculation failed"))?;
 
-            log::debug!("effective virtual addr: {:x}", addr);
+            // NOTE(ww): If we're tracing a 32-bit program, truncate the effective
+            // address back down to 32 bits. This is almost never necessary, except
+            // for when a particular computed address overflows into the higher bits.
+            // The latter has happened with the segments that we *do* support.
+            if self.tracer.bitness == 32 {
+                addr = (addr as u32).into();
+            }
+
+            log::debug!("effective virtual addr: {:#x}", addr);
 
             for op in ops {
                 let data = match op {
@@ -534,8 +544,6 @@ impl<'a> Tracee<'a> {
                     data: data,
                 });
             }
-
-            log::debug!("{:?}", used_mem);
         }
 
         Ok(hints)
