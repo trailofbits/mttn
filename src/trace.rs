@@ -499,8 +499,10 @@ impl<'a> Tracee<'a> {
 
             let mask = match used_mem.memory_size() {
                 MemorySize::UInt8 | MemorySize::Int8 => MemoryMask::Byte,
-                MemorySize::UInt16 | MemorySize::Int16 => MemoryMask::Word,
-                MemorySize::UInt32 | MemorySize::Int32 => MemoryMask::DWord,
+                MemorySize::UInt16 | MemorySize::Int16 | MemorySize::WordOffset => MemoryMask::Word,
+                MemorySize::UInt32 | MemorySize::Int32 | MemorySize::DwordOffset => {
+                    MemoryMask::DWord
+                }
                 MemorySize::UInt64 | MemorySize::Int64 => MemoryMask::QWord,
                 MemorySize::Unknown => self.mask_from_str_instr(instr)?,
                 size => {
