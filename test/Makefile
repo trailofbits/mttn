@@ -31,7 +31,7 @@ $(ASM_OBJS): $(ASM_SOURCES)
 	nasm -f elf32 $(basename $@).s -o $(basename $@).o
 
 $(C_ELFS): $(C_SOURCES)
-	$(CC) -g -m32 -static -std=c99 $(basename $@).c -o $(basename $@).elf -mpreferred-stack-boundary=2 -fno-stack-protector -z execstack
+	$(CC) -g -m32 -mtune=i386 -Wl,-emain -nostdlib -static -std=c99 $(basename $@).c -o $(basename $@).elf -mpreferred-stack-boundary=2 -fno-stack-protector -z execstack
 
 .PHONY: clean
 clean:
