@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{App, Arg, ArgGroup};
 
 use std::io::{stdout, Write};
@@ -8,7 +8,6 @@ mod tiny86;
 mod trace;
 
 use tiny86::{Bitstring, Tiny86Write};
-use trace::Step;
 
 fn app<'a, 'b>() -> App<'a, 'b> {
     App::new(env!("CARGO_PKG_NAME"))
@@ -20,8 +19,8 @@ fn app<'a, 'b>() -> App<'a, 'b> {
                 .short("F")
                 .long("format")
                 .takes_value(true)
-                .possible_values(&["json", "tiny86", "tiny86-text"])
-                .default_value("json"),
+                .possible_values(&["jsonl", "tiny86", "tiny86-text"])
+                .default_value("jsonl"),
         )
         .arg(
             Arg::with_name("mode")
@@ -87,7 +86,9 @@ fn run() -> Result<()> {
     let mut traces = tracer.trace()?;
 
     match matches.value_of("output-format").unwrap() {
-        "json" => serde_json::to_writer(stdout(), &traces.collect::<Result<Vec<Step>>>()?)?,
+        "jsonl" => {
+            traces.try_for_each(|s| jsonl::write(stdout(), &s?).map_err(|e| anyhow!("{:?}", e)))?
+        }
         "tiny86" => traces.try_for_each(|s| s?.tiny86_write(&mut stdout()))?,
         "tiny86-text" => traces.try_for_each(|s| {
             // TODO(ww): Clean this up.
