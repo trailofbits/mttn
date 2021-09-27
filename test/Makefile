@@ -1,4 +1,4 @@
-MTTN := mttn
+MTTN := cargo run --quiet --bin mttn --
 
 ASM_TESTS := \
 	memops \
