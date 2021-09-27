@@ -1,3 +1,4 @@
 /target
 *.elf
 *.o
+/test/*.trace.*
