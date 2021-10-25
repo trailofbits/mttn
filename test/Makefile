@@ -10,7 +10,8 @@ ASM_TESTS := \
 	alu_add \
 	mov_r_r \
 	xchg_r_r \
-	lea
+	lea \
+	rcl
 
 C_TESTS := \
 	seteip \
