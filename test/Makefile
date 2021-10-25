@@ -11,7 +11,8 @@ ASM_TESTS := \
 	mov_r_r \
 	xchg_r_r \
 	lea \
-	rcl
+	rcl \
+	rol
 
 C_TESTS := \
 	seteip \
