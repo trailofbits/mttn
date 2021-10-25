@@ -1,4 +1,9 @@
+use std::convert::{TryFrom, TryInto};
+use std::os::unix::process::CommandExt;
+use std::process::Command;
+
 use anyhow::{anyhow, Context, Result};
+use derivative::Derivative;
 use iced_x86::{
     Code, Decoder, DecoderOptions, Instruction, InstructionInfoFactory, InstructionInfoOptions,
     MemorySize, Mnemonic, OpAccess, Register,
@@ -12,11 +17,8 @@ use nix::unistd::Pid;
 use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
-use std::convert::{TryFrom, TryInto};
-use std::os::unix::process::CommandExt;
-use std::process::Command;
-
 const MAX_INSTR_LEN: usize = 15;
+const RFLAGS_IF_MASK: u64 = 512;
 
 pub trait CommandPersonality {
     fn personality(&mut self, persona: Persona);
@@ -113,7 +115,7 @@ pub struct Step {
 /// Only the standard addressable registers, plus `RFLAGS`, are tracked.
 /// `mttn` assumes that all segment base addresses are `0` and therefore doesn't
 /// track them.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Derivative, PartialEq, Serialize)]
 pub struct RegisterFile {
     pub rax: u64,
     pub rbx: u64,
@@ -132,6 +134,8 @@ pub struct RegisterFile {
     pub r14: u64,
     pub r15: u64,
     pub rip: u64,
+    // NOTE(ww): The second bit of RFLAGS is always high.
+    #[derivative(Default(value = "2"))]
     pub rflags: u64,
     pub fs_base: u64,
     pub gs_base: u64,
@@ -366,6 +370,12 @@ impl<'a> Tracee<'a> {
     /// Loads the our register file from the tracee's user register state.
     fn tracee_regs(&mut self) -> Result<()> {
         self.register_file = RegisterFile::from(ptrace::getregs(self.tracee_pid)?);
+
+        // The IF flag is purely a remnant of our tracer (since we're single-stepping),
+        // so clear it for maximum fidelity when we're tracing for Tiny86.
+        if self.tracer.tiny86_only {
+            self.register_file.rflags &= !RFLAGS_IF_MASK;
+        }
 
         Ok(())
     }
@@ -675,8 +685,9 @@ impl Tracer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     fn dummy_regs() -> RegisterFile {
         RegisterFile {

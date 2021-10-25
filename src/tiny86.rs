@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Result};
-
 use std::io::Write;
+
+use anyhow::{anyhow, Result};
 
 use crate::trace::{MemoryHint, RegisterFile, Step};
 
