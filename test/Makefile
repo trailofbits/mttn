@@ -9,10 +9,12 @@ ASM_TESTS := \
 	alu_add_neg \
 	alu_add \
 	mov_r_r \
-	xchg_r_r
+	xchg_r_r \
+	lea
 
 C_TESTS := \
-	seteip
+	seteip \
+	smallcall
 
 
 ASM_SOURCES := $(ASM_TESTS:=.s)
@@ -40,7 +42,9 @@ $(ASM_OBJS): $(ASM_SOURCES)
 	nasm -f elf32 $(basename $@).s -o $(basename $@).o
 
 $(C_ELFS): $(C_SOURCES)
-	$(CC) -g -m32 -mtune=i386 -Wl,-emain -nostdlib -static -std=c99 $(basename $@).c -o $(basename $@).elf -mpreferred-stack-boundary=2 -fno-stack-protector -z execstack
+	$(CC) -fno-pic -g -m32 -mtune=i386 -Wl,-emain -nostdlib -static -std=c99 \
+		$(basename $@).c -o $(basename $@).elf -mpreferred-stack-boundary=2 \
+		-fno-stack-protector -z execstack
 
 .PHONY: trace-jsonls
 trace-jsonls: $(TRACE_JSONLS)
