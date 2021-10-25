@@ -1,4 +1,4 @@
-FROM rust:1.53
+FROM rust:1.56
 
 RUN apt update && apt install -y nasm gdb gcc-multilib
 
