@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
-use clap::{App, Arg, ArgGroup};
-
 use std::io::{stdout, Write};
 use std::process;
+
+use anyhow::{anyhow, Result};
+use clap::{App, Arg, ArgGroup};
 
 mod tiny86;
 mod trace;
