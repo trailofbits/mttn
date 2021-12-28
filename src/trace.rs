@@ -405,6 +405,7 @@ impl<'a> Tracee<'a> {
         let mut decoder = Decoder::new(self.tracer.bitness, &bytes, DecoderOptions::NONE);
         decoder.set_ip(self.register_file.rip);
 
+        // TODO(ww): Use decode_out with a `self.instr` here, to avoid a copy.
         let instr = decoder.decode();
         log::debug!("instr: {:?}", instr.code());
 
