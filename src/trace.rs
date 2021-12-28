@@ -792,12 +792,19 @@ mod tests {
         }
     }
 
+    // find test/ -name '*.s' | sort | xargs -n1 basename -s .s
     trace_consistency_tests! {
-        memops,
-        stosb,
-        stosw,
-        stosd,
         alu_adc,
+        alu_add,
         alu_add_neg,
+        lea,
+        memops,
+        mov_r_r,
+        rcl,
+        rol,
+        stosb,
+        stosd,
+        stosw,
+        xchg_r_r,
     }
 }
