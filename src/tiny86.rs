@@ -9,7 +9,8 @@ const TINY86_MAX_HINT_DATA_LEN: usize = 4;
 const TINY86_MAX_HINTS: usize = 2;
 
 pub trait Tiny86Write {
-    fn serialized_size() -> usize;
+    const SERIALIZED_SIZE: usize;
+
     fn pad_write(w: &mut impl Write) -> Result<()>;
     fn tiny86_write(&self, w: &mut impl Write) -> Result<()>;
 }
@@ -24,15 +25,13 @@ pub trait Bitstring {
 /// 1. Address (4 bytes)
 /// 2. Data (4 bytes)
 impl Tiny86Write for MemoryHint {
-    fn serialized_size() -> usize {
-        9
-    }
+    const SERIALIZED_SIZE: usize = 9;
 
     fn pad_write(w: &mut impl Write) -> Result<()> {
         // NOTE(ww): This would be better as an array, but then `serialized_size()` would have
         // to be a `const fn` and Rust (as of 1.48) doesn't support those in traits or trait
         // impls yet.
-        let nothing = vec![0u8; Self::serialized_size()];
+        let nothing = vec![0u8; Self::SERIALIZED_SIZE];
         w.write_all(&nothing)?;
 
         Ok(())
@@ -79,12 +78,10 @@ impl Tiny86Write for MemoryHint {
 /// * EIP (4 bytes)
 /// * EFLAGS (4 bytes)
 impl Tiny86Write for RegisterFile {
-    fn serialized_size() -> usize {
-        40
-    }
+    const SERIALIZED_SIZE: usize = 40;
 
     fn pad_write(w: &mut impl Write) -> Result<()> {
-        let nothing = vec![0u8; Self::serialized_size()];
+        let nothing = vec![0u8; Self::SERIALIZED_SIZE];
         w.write_all(&nothing)?;
 
         Ok(())
@@ -120,9 +117,8 @@ impl Tiny86Write for RegisterFile {
 /// at bit 0. Observe also that multi-byte fields are in big-endian order,
 /// since that's what the circuit uses internally.
 impl Tiny86Write for Step {
-    fn serialized_size() -> usize {
-        TINY86_MAX_INSTR_LEN + RegisterFile::serialized_size() + (MemoryHint::serialized_size() * 2)
-    }
+    const SERIALIZED_SIZE: usize =
+        TINY86_MAX_INSTR_LEN + RegisterFile::SERIALIZED_SIZE + (MemoryHint::SERIALIZED_SIZE * 2);
 
     fn pad_write(w: &mut impl Write) -> Result<()> {
         MemoryHint::pad_write(w)?;
@@ -246,7 +242,7 @@ mod tests {
 
     fn dword_hint_asserts(hint_bytes: &[u8]) {
         assert_eq!(
-            &hint_bytes[..MemoryHint::serialized_size()],
+            &hint_bytes[..MemoryHint::SERIALIZED_SIZE],
             vec![0b10000110, 0xcd, 0xcd, 0xcd, 0xcd, 0x41, 0x41, 0x41, 0x41]
         );
     }
@@ -274,7 +270,7 @@ mod tests {
             hint.tiny86_write(&mut buf)
                 .expect("tiny86 hint serialization failed");
 
-            assert_eq!(buf.len(), MemoryHint::serialized_size());
+            assert_eq!(buf.len(), MemoryHint::SERIALIZED_SIZE);
 
             assert_eq!(
                 buf,
@@ -289,7 +285,7 @@ mod tests {
             hint.tiny86_write(&mut buf)
                 .expect("tiny86 hint serialization failed");
 
-            assert_eq!(buf.len(), MemoryHint::serialized_size());
+            assert_eq!(buf.len(), MemoryHint::SERIALIZED_SIZE);
 
             dword_hint_asserts(&buf);
         }
@@ -303,7 +299,7 @@ mod tests {
         regs.tiny86_write(&mut buf)
             .expect("tiny86 regfile serialization failed");
 
-        assert_eq!(buf.len(), RegisterFile::serialized_size());
+        assert_eq!(buf.len(), RegisterFile::SERIALIZED_SIZE);
 
         regfile_asserts(&buf);
     }
@@ -318,15 +314,15 @@ mod tests {
             step.tiny86_write(&mut buf)
                 .expect("tiny86 step serialization failed");
 
-            assert_eq!(buf.len(), Step::serialized_size());
+            assert_eq!(buf.len(), Step::SERIALIZED_SIZE);
 
             // First, two empty memory hints.
-            let mut off = MemoryHint::serialized_size() * 2;
+            let mut off = MemoryHint::SERIALIZED_SIZE * 2;
             assert_eq!(&buf[0..off], vec![0; off]);
 
             // Next, the register file.
             regfile_asserts(&buf[off..]);
-            off += RegisterFile::serialized_size();
+            off += RegisterFile::SERIALIZED_SIZE;
 
             // The instruction is a RET, padded out with NOPs.
             assert_eq!(*buf.last().unwrap(), 0xc3);
@@ -344,18 +340,18 @@ mod tests {
             step.tiny86_write(&mut buf)
                 .expect("tiny86 step serialization failed");
 
-            assert_eq!(buf.len(), Step::serialized_size());
+            assert_eq!(buf.len(), Step::SERIALIZED_SIZE);
 
             // One memory hint, followed by empty padding.
             dword_hint_asserts(&buf);
-            let mut off = MemoryHint::serialized_size() * 2;
+            let mut off = MemoryHint::SERIALIZED_SIZE * 2;
             assert_eq!(
-                &buf[MemoryHint::serialized_size()..off],
-                vec![0; MemoryHint::serialized_size()]
+                &buf[MemoryHint::SERIALIZED_SIZE..off],
+                vec![0; MemoryHint::SERIALIZED_SIZE]
             );
 
             regfile_asserts(&buf[off..]);
-            off += RegisterFile::serialized_size();
+            off += RegisterFile::SERIALIZED_SIZE;
 
             // The instruction is a RET, padded out with NOPs.
             assert_eq!(*buf.last().unwrap(), 0xc3);
@@ -373,15 +369,15 @@ mod tests {
             step.tiny86_write(&mut buf)
                 .expect("tiny86 step serialization failed");
 
-            assert_eq!(buf.len(), Step::serialized_size());
+            assert_eq!(buf.len(), Step::SERIALIZED_SIZE);
 
             // Two valid memory hints.
             dword_hint_asserts(&buf);
-            dword_hint_asserts(&buf[MemoryHint::serialized_size()..]);
-            let mut off = MemoryHint::serialized_size() * 2;
+            dword_hint_asserts(&buf[MemoryHint::SERIALIZED_SIZE..]);
+            let mut off = MemoryHint::SERIALIZED_SIZE * 2;
 
             regfile_asserts(&buf[off..]);
-            off += RegisterFile::serialized_size();
+            off += RegisterFile::SERIALIZED_SIZE;
 
             // The instruction is a RET, padded out with NOPs.
             assert_eq!(*buf.last().unwrap(), 0xc3);

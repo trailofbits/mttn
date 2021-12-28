@@ -405,6 +405,7 @@ impl<'a> Tracee<'a> {
         let mut decoder = Decoder::new(self.tracer.bitness, &bytes, DecoderOptions::NONE);
         decoder.set_ip(self.register_file.rip);
 
+        // TODO(ww): Use decode_out with a `self.instr` here, to avoid a copy.
         let instr = decoder.decode();
         log::debug!("instr: {:?}", instr.code());
 
@@ -792,12 +793,19 @@ mod tests {
         }
     }
 
+    // find test/ -name '*.s' | sort | xargs -n1 basename -s .s
     trace_consistency_tests! {
-        memops,
-        stosb,
-        stosw,
-        stosd,
         alu_adc,
+        alu_add,
         alu_add_neg,
+        lea,
+        memops,
+        mov_r_r,
+        rcl,
+        rol,
+        stosb,
+        stosd,
+        stosw,
+        xchg_r_r,
     }
 }
