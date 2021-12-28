@@ -624,7 +624,7 @@ pub struct Tracer {
     pub target: Target,
 }
 
-impl From<&clap::ArgMatches<'_>> for Tracer {
+impl From<&clap::ArgMatches> for Tracer {
     fn from(matches: &clap::ArgMatches) -> Self {
         let target = if let Some(pid) = matches.value_of("tracee-pid") {
             Target::Process(Pid::from_raw(pid.parse().unwrap()))

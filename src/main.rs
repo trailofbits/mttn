@@ -9,71 +9,73 @@ mod trace;
 
 use tiny86::{Bitstring, Tiny86Write};
 
-fn app<'a, 'b>() -> App<'a, 'b> {
+fn app() -> App<'static> {
     App::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .arg(
-            Arg::with_name("output-format")
+            Arg::new("output-format")
                 .help("The output format to use")
-                .short("F")
+                .short('F')
                 .long("format")
                 .takes_value(true)
                 .possible_values(&["jsonl", "tiny86", "tiny86-text"])
                 .default_value("jsonl"),
         )
         .arg(
-            Arg::with_name("mode")
+            Arg::new("mode")
                 .help("The CPU mode to decode instructions with")
-                .short("m")
+                .short('m')
                 .long("mode")
                 .takes_value(true)
                 .possible_values(&["32", "64"])
                 .default_value("64"),
         )
         .arg(
-            Arg::with_name("ignore-unsupported-memops")
+            Arg::new("ignore-unsupported-memops")
                 .help("Ignore unsupported memory ops instead of failing")
-                .short("I")
+                .short('I')
                 .long("ignore-unsupported-memops"),
         )
         .arg(
-            Arg::with_name("tiny86-only")
+            Arg::new("tiny86-only")
                 .help("Fail if the tracer encounters x86 functionality that Tiny86 doesn't support")
-                .short("t")
+                .short('t')
                 .long("tiny86-only"),
         )
         .arg(
-            Arg::with_name("debug-on-fault")
+            Arg::new("debug-on-fault")
                 .help("Suspend the tracee and detach if a memory access faults")
-                .short("d")
+                .short('d')
                 .long("debug-on-fault"),
         )
         .arg(
-            Arg::with_name("disable-aslr")
+            Arg::new("disable-aslr")
                 .help("Disable ASLR on the tracee")
-                .short("A")
+                .short('A')
                 .long("disable-aslr"),
         )
         .arg(
-            Arg::with_name("tracee-pid")
+            Arg::new("tracee-pid")
                 .help("Attach to the given PID for tracing")
-                .short("a")
+                .short('a')
                 .long("attach")
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("tracee-name")
+            Arg::new("tracee-name")
                 .help("The program to trace")
                 .index(1),
         )
         .arg(
-            Arg::with_name("tracee-args")
+            Arg::new("tracee-args")
                 .help("The command-line arguments to execute the tracee with")
-                .raw(true),
+                .raw(true)
+                .multiple_values(true)
+                .index(2),
         )
         .group(
-            ArgGroup::with_name("target")
+            ArgGroup::new("target")
                 .required(true)
                 .args(&["tracee-pid", "tracee-name"]),
         )
@@ -111,4 +113,14 @@ fn main() {
             1
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_app() {
+        app().debug_assert();
+    }
 }
