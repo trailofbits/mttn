@@ -12,7 +12,8 @@ ASM_TESTS := \
 	xchg_r_r \
 	lea \
 	rcl \
-	rol
+	rol \
+	jmp
 
 C_TESTS := \
 	seteip \

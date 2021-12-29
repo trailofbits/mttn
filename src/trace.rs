@@ -798,6 +798,7 @@ mod tests {
         alu_adc,
         alu_add,
         alu_add_neg,
+        jmp,
         lea,
         memops,
         mov_r_r,
