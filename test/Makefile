@@ -17,7 +17,8 @@ ASM_TESTS := \
 
 C_TESTS := \
 	seteip \
-	smallcall
+	smallcall \
+	jumptable
 
 
 ASM_SOURCES := $(ASM_TESTS:=.s)
