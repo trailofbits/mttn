@@ -819,6 +819,14 @@ mod tests {
                     for (step1, step2) in trace1.iter().zip(trace2.iter()) {
                         assert_eq!(step1, step2);
                     }
+
+                    let trace3count = tracer
+                        .trace()
+                        .expect("spawn failed")
+                        .count_instructions()
+                        .expect("count failed");
+
+                    assert_eq!(trace1.len(), trace3count);
                 }
             )*
         }
