@@ -304,7 +304,7 @@ impl<'a> Tracee<'a> {
     /// Count the total number of instructions in the trace by stepping the tracee forwards
     /// one instruction at a time, but _without_ modeling memory. After calling this function,
     /// `self.terminated` will be `true` and this `Tracee` will be an empty `Step` iterator.
-    pub fn count_instructions(&mut self) -> Result<usize> {
+    pub fn count_instructions(self) -> Result<usize> {
         let mut count: usize = 0;
 
         if self.tracer.tiny86_only {
