@@ -1,4 +1,4 @@
-use std::io::{stdout, Write};
+use std::io::{stderr, stdout, Write};
 use std::process;
 
 use anyhow::{anyhow, Result};
@@ -19,7 +19,7 @@ fn app() -> App<'static> {
                 .short('F')
                 .long("format")
                 .takes_value(true)
-                .possible_values(&["jsonl", "tiny86", "tiny86-text"])
+                .possible_values(&["jsonl", "tiny86", "tiny86-text", "inst-count"])
                 .default_value("jsonl"),
         )
         .arg(
@@ -97,6 +97,19 @@ fn run() -> Result<()> {
             s?.bitstring()
                 .and_then(|bs| Ok(writeln!(stdout(), "{}", bs)?))
         })?,
+        "inst-count" => {
+            match traces.count_instructions() {
+                Ok(count) => {
+                    write!(stdout(), "{}", count)?;
+                    stdout().flush()?;
+                    writeln!(stderr(), " instructions")?;
+                    stderr().flush()?;
+                },
+                Err(error) => {
+                    writeln!(stderr(), "Error counting instructions: {}", error)?;
+                }
+            }
+        },
         _ => unreachable!(),
     };
 
