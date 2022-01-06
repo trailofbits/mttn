@@ -97,17 +97,15 @@ fn run() -> Result<()> {
             s?.bitstring()
                 .and_then(|bs| Ok(writeln!(stdout(), "{}", bs)?))
         })?,
-        "inst-count" => {
-            match traces.count_instructions() {
-                Ok(count) => {
-                    write!(stdout(), "{}", count)?;
-                    stdout().flush()?;
-                    writeln!(stderr(), " instructions")?;
-                    stderr().flush()?;
-                },
-                Err(error) => {
-                    writeln!(stderr(), "Error counting instructions: {}", error)?;
-                }
+        "inst-count" => match traces.count_instructions() {
+            Ok(count) => {
+                write!(stdout(), "{}", count)?;
+                stdout().flush()?;
+                writeln!(stderr(), " instructions")?;
+                stderr().flush()?;
+            }
+            Err(error) => {
+                writeln!(stderr(), "Error counting instructions: {}", error)?;
             }
         },
         _ => unreachable!(),
