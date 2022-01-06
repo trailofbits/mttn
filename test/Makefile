@@ -18,7 +18,8 @@ ASM_TESTS := \
 C_TESTS := \
 	seteip \
 	smallcall \
-	jumptable
+	jumptable \
+	condition
 
 
 ASM_SOURCES := $(ASM_TESTS:=.s)

@@ -1,11 +1,12 @@
+use std::convert::TryInto;
 use std::io::Write;
 
 use anyhow::{anyhow, Result};
 
-use crate::trace::{MemoryHint, RegisterFile, Step};
+use crate::trace::{MemoryHint, MemoryMask, RegisterFile, Step};
 
 const TINY86_MAX_INSTR_LEN: usize = 12;
-const TINY86_MAX_HINT_DATA_LEN: usize = 4;
+const TINY86_MAX_HINT_DATA_LEN: usize = (u32::BITS / 8) as usize;
 const TINY86_MAX_HINTS: usize = 2;
 
 pub trait Tiny86Write {
@@ -22,8 +23,8 @@ pub trait Bitstring {
 /// A Tiny86 memory hint is serialized as three fields, in order:
 ///
 /// 0. Operation mask and width (1 byte)
-/// 1. Address (4 bytes)
-/// 2. Data (4 bytes)
+/// 1. Address (4 bytes, big endian)
+/// 2. Data (4 bytes, big endian)
 impl Tiny86Write for MemoryHint {
     const SERIALIZED_SIZE: usize = 9;
 
@@ -61,12 +62,20 @@ impl Tiny86Write for MemoryHint {
             ));
         }
 
-        // We reserve 4 bytes for the hint's data, but we could have less.
-        // Any remaining bytes are zeroes.
-        let mut data = vec![0u8; TINY86_MAX_HINT_DATA_LEN];
-        data.splice(..self.data.len(), self.data.iter().cloned());
+        let data = match self.mask {
+            MemoryMask::Byte => u8::from_le_bytes(self.data[..].try_into()?) as u32,
+            MemoryMask::Word => u16::from_le_bytes(self.data[..].try_into()?) as u32,
+            MemoryMask::DWord => u32::from_le_bytes(self.data[..].try_into()?),
+            // The len() check above prevents us from hitting QWord.
+            _ => unreachable!()
+        };
 
-        w.write_all(&data)?;
+        // // We reserve 4 bytes for the hint's data, but we could have less.
+        // // Any remaining bytes are zeroes.
+        // let mut data = vec![0u8; TINY86_MAX_HINT_DATA_LEN];
+        // data.splice(..self.data.len(), self.data.iter().cloned());
+
+        w.write_all(&data.to_be_bytes())?;
 
         Ok(())
     }
@@ -274,7 +283,7 @@ mod tests {
 
             assert_eq!(
                 buf,
-                vec![0b10000101, 0xcd, 0xcd, 0xcd, 0xcd, 0xcc, 0xcc, 0x00, 0x00]
+                vec![0b10000101, 0xcd, 0xcd, 0xcd, 0xcd, 0x00, 0x00, 0xcc, 0xcc]
             );
         }
 
