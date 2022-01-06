@@ -301,6 +301,55 @@ impl<'a> Tracee<'a> {
         }
     }
 
+    /// Count the total number of instructions in the trace by stepping the tracee forwards
+    /// one instruction at a time, but _without_ modeling memory. After calling this function,
+    /// `self.terminated` will be `true` and this `Tracee` will be an empty `Step` iterator.
+    pub fn count_instructions(mut self) -> Result<usize> {
+        let mut count: usize = 0;
+
+        if self.tracer.tiny86_only {
+            // we need to do a full trace, modeling memory
+            while !self.terminated {
+                self.step()?;
+                count += 1;
+            }
+        } else {
+            // we just need to count the number of ptrace steps until the process terminates
+            while !self.terminated {
+                ptrace::step(self.tracee_pid, None)?;
+
+                count += 1;
+
+                self.wait()?
+            }
+        }
+
+        Ok(count)
+    }
+
+    fn wait(&mut self) -> Result<()> {
+        match wait::waitpid(self.tracee_pid, None)? {
+            wait::WaitStatus::Exited(_, status) => {
+                log::debug!("exited with {}", status);
+                self.terminated = true;
+            }
+            wait::WaitStatus::Signaled(_, _, _) => {
+                log::debug!("signaled");
+            }
+            wait::WaitStatus::Stopped(_, signal) => {
+                log::debug!("stopped with {:?}", signal);
+            }
+            wait::WaitStatus::StillAlive => {
+                log::debug!("still alive");
+            }
+            s => {
+                log::debug!("{:?}", s);
+                self.terminated = true;
+            }
+        }
+        Ok(())
+    }
+
     /// Step the tracee forwards by one instruction, returning the trace `Step` or
     /// an `Err` if an internal tracing step fails.
     fn step(&mut self) -> Result<Step> {
@@ -339,25 +388,7 @@ impl<'a> Tracee<'a> {
         // associated with each Write hint in stage 2.
         self.tracee_hints_stage2(&mut hints)?;
 
-        match wait::waitpid(self.tracee_pid, None)? {
-            wait::WaitStatus::Exited(_, status) => {
-                log::debug!("exited with {}", status);
-                self.terminated = true;
-            }
-            wait::WaitStatus::Signaled(_, _, _) => {
-                log::debug!("signaled");
-            }
-            wait::WaitStatus::Stopped(_, signal) => {
-                log::debug!("stopped with {:?}", signal);
-            }
-            wait::WaitStatus::StillAlive => {
-                log::debug!("still alive");
-            }
-            s => {
-                log::debug!("{:?}", s);
-                self.terminated = true;
-            }
-        }
+        self.wait()?;
 
         #[allow(clippy::redundant_field_names)]
         Ok(Step {
@@ -788,6 +819,14 @@ mod tests {
                     for (step1, step2) in trace1.iter().zip(trace2.iter()) {
                         assert_eq!(step1, step2);
                     }
+
+                    let trace3count = tracer
+                        .trace()
+                        .expect("spawn failed")
+                        .count_instructions()
+                        .expect("count failed");
+
+                    assert_eq!(trace1.len(), trace3count);
                 }
             )*
         }
