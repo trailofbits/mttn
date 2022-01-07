@@ -58,10 +58,10 @@ trace-jsonls: $(TRACE_JSONLS)
 trace-texts: $(TRACE_TEXTS)
 
 %.trace.jsonl: %.elf
-	$(MTTN) -t -m32 -F jsonl ./$< > $@
+	$(MTTN) -At -m32 -F jsonl ./$< > $@
 
 %.trace.txt: %.elf
-	$(MTTN) -t -m32 -F tiny86-text ./$< > $@
+	$(MTTN) -At -m32 -F tiny86-text ./$< > $@
 
 .PHONY: clean
 clean:
