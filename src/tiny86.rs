@@ -70,11 +70,6 @@ impl Tiny86Write for MemoryHint {
             _ => unreachable!()
         };
 
-        // // We reserve 4 bytes for the hint's data, but we could have less.
-        // // Any remaining bytes are zeroes.
-        // let mut data = vec![0u8; TINY86_MAX_HINT_DATA_LEN];
-        // data.splice(..self.data.len(), self.data.iter().cloned());
-
         w.write_all(&data.to_be_bytes())?;
 
         Ok(())
