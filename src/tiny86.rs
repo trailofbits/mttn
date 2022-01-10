@@ -67,7 +67,7 @@ impl Tiny86Write for MemoryHint {
             MemoryMask::Word => u16::from_le_bytes(self.data[..].try_into()?) as u32,
             MemoryMask::DWord => u32::from_le_bytes(self.data[..].try_into()?),
             // The len() check above prevents us from hitting QWord.
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         w.write_all(&data.to_be_bytes())?;
