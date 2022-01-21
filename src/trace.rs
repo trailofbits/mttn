@@ -841,6 +841,8 @@ mod tests {
         lea,
         memops,
         mov_r_r,
+        push_pop,
+        push_pop2,
         rcl,
         rol,
         stosb,

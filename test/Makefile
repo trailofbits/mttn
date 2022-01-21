@@ -13,7 +13,9 @@ ASM_TESTS := \
 	lea \
 	rcl \
 	rol \
-	jmp
+	jmp \
+	push_pop \
+	push_pop2
 
 C_TESTS := \
 	seteip \
