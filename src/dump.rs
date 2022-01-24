@@ -21,11 +21,17 @@ fn packed_permissions(perms: &rsprocmaps::Permissions) -> u8 {
 
 fn map_data(pid: Pid, map: &rsprocmaps::Map) -> Result<Vec<u8>> {
     let mut mem = File::open(format!("/proc/{pid}/mem"))?;
-    let size = (map.address_range.end - map.address_range.begin).try_into()?;
-    let mut data = Vec::with_capacity(size);
+    let size = map.address_range.end - map.address_range.begin;
+    let mut data = Vec::with_capacity(size.try_into()?);
+
+    log::debug!(
+        "attempting to read {size} bytes from {:x} ({:?})",
+        map.address_range.begin,
+        map.pathname
+    );
 
     mem.seek(SeekFrom::Start(map.address_range.begin))?;
-    mem.read_exact(&mut data)?;
+    mem.take(size).read_to_end(&mut data)?;
 
     Ok(data)
 }
@@ -49,6 +55,12 @@ pub(crate) fn dump(pid: Pid, dest: impl AsRef<Path>) -> Result<()> {
 
     for map in maps {
         let map = map?;
+
+        // Kernel bug(?): [vvar] can't be dumped via ptrace or `/proc/PID/mem`
+        // despite being marked as readable.
+        if matches!(map.pathname, rsprocmaps::Pathname::Vvar) {
+            continue;
+        }
 
         dump.write_all(&map.address_range.begin.to_le_bytes())?;
         dump.write_all(&map.address_range.end.to_le_bytes())?;

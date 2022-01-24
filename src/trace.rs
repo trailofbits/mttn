@@ -715,7 +715,7 @@ impl Tracer {
                 Pid::from_raw(child.id() as i32)
             }
             Target::Process(pid) => {
-                ptrace::attach(*pid)?;
+                ptrace::attach(*pid).with_context(|| format!("couldn't attach to {}", pid))?;
                 *pid
             }
         };
