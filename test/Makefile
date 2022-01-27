@@ -11,7 +11,7 @@ ASM_TESTS := \
 	mov_r_r \
 	xchg_r_r \
 	lea \
-	loop \
+	loop_ \
 	rcl \
 	rol \
 	jmp \
