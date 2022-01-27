@@ -839,7 +839,7 @@ mod tests {
         alu_add_neg,
         jmp,
         lea,
-        loop,
+        r#loop,
         memops,
         mov_r_r,
         push_pop,
