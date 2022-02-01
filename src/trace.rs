@@ -17,6 +17,8 @@ use nix::unistd::Pid;
 use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
+use crate::dump;
+
 const MAX_INSTR_LEN: usize = 15;
 const RFLAGS_IF_MASK: u64 = 512;
 
@@ -658,7 +660,19 @@ pub struct Tracer {
 impl From<&clap::ArgMatches> for Tracer {
     fn from(matches: &clap::ArgMatches) -> Self {
         let target = if let Some(pid) = matches.value_of("tracee-pid") {
-            Target::Process(Pid::from_raw(pid.parse().unwrap()))
+            let pid = Pid::from_raw(pid.parse().unwrap());
+
+            // If we're starting from a PID, then we need to create
+            // a dump of the current memory state. Do that now.
+            let dump_name = matches
+                .value_of("memory-file")
+                .map(Into::into)
+                .unwrap_or_else(|| format!("{}.memory", pid));
+
+            // There's no sense in proceeding if the dump fails.
+            dump::dump(pid, &dump_name).unwrap();
+
+            Target::Process(pid)
         } else {
             Target::Program(
                 matches.value_of("tracee-name").map(Into::into).unwrap(),
@@ -701,7 +715,7 @@ impl Tracer {
                 Pid::from_raw(child.id() as i32)
             }
             Target::Process(pid) => {
-                ptrace::attach(*pid)?;
+                ptrace::attach(*pid).with_context(|| format!("couldn't attach to {}", pid))?;
                 *pid
             }
         };

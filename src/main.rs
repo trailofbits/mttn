@@ -4,6 +4,7 @@ use std::process;
 use anyhow::{anyhow, Result};
 use clap::{App, Arg, ArgGroup};
 
+mod dump;
 mod tiny86;
 mod trace;
 
@@ -56,15 +57,24 @@ fn app() -> App<'static> {
                 .long("disable-aslr"),
         )
         .arg(
+            Arg::new("memory-file")
+                .help("the path to write the memory dump to (defaults to <pid>.memory")
+                .short('M')
+                .long("memory-file")
+                .takes_value(true),
+        )
+        .arg(
             Arg::new("tracee-pid")
                 .help("Attach to the given PID for tracing")
                 .short('a')
                 .long("attach")
+                .conflicts_with("disable-aslr")
                 .takes_value(true),
         )
         .arg(
             Arg::new("tracee-name")
                 .help("The program to trace")
+                .conflicts_with("memory-file")
                 .index(1),
         )
         .arg(

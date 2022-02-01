@@ -27,8 +27,9 @@ recent Linux kernel. If you're on another platform, you can use the Dockerfile:
 
 ```bash
 $ docker build . -t mttn
-$ # we need seccomp=unconfined for ptrace, as well as (optionally) disabling ASLR
-$ docker run --rm -it --security-opt seccomp=unconfined -v $(pwd):/app/mttn mttn
+# we need seccomp=unconfined for ptrace, as well as (optionally) disabling ASLR
+# similarly for CAP_SYS_PTRACE: we need it for attaching to processes
+$ docker run --rm -it --cap-add=SYS_PTRACE --security-opt seccomp=unconfined -v $(pwd):/app/mttn mttn
 $ # in docker
 $ cd /app/mttn
 ```
