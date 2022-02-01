@@ -27,10 +27,12 @@ compile: docker
 	docker run -it --rm --security-opt seccomp=unconfined --mount type=bind,source="$(REPO_DIR)",target=/app/mttn $(IMAGE_NAME) cargo build
 
 .PHONY: docker
-docker: .last_built
+docker: .last_built ../forcedentry/.last_built
 
-.last_built: Dockerfile
+.last_built ../forcedentry/.last_built: Dockerfile
 	make -C OpenJDK-i386 docker
+# this makefile builds the trailofbits/mttn base image:
+	make -C ../forcedentry docker
 	docker build -t $(IMAGE_NAME) -f $(MAKEFILE_DIR)/Dockerfile $(MAKEFILE_DIR)
 	@touch .last_built
 	@echo Built $(IMAGE_NAME)
