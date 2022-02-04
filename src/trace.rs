@@ -20,6 +20,7 @@ use spawn_ptrace::CommandPtraceSpawn;
 use crate::dump;
 
 const MAX_INSTR_LEN: usize = 15;
+const RFLAGS_RESERVED_MASK: u64 = 2;
 const RFLAGS_IF_MASK: u64 = 512;
 
 pub trait CommandPersonality {
@@ -404,10 +405,16 @@ impl<'a> Tracee<'a> {
     fn tracee_regs(&mut self) -> Result<()> {
         self.register_file = RegisterFile::from(ptrace::getregs(self.tracee_pid)?);
 
-        // The IF flag is purely a remnant of our tracer (since we're single-stepping),
-        // so clear it for maximum fidelity when we're tracing for Tiny86.
         if self.tracer.tiny86_only {
+            // The IF flag is purely a remnant of our tracer (since we're single-stepping),
+            // so clear it for maximum fidelity when we're tracing for Tiny86.
             self.register_file.rflags &= !RFLAGS_IF_MASK;
+
+            // Similarly: `ptrace(PTRACE_GETREGS, ...)` seems to be slightly bugged on
+            // x86-64 Linux, and returns `rflags: 0` at process start. This
+            // is architecturally impossible (`rflags >= 2` because of the reserved bit),
+            // so we just fix it up here.
+            self.register_file.rflags |= RFLAGS_RESERVED_MASK;
         }
 
         Ok(())
