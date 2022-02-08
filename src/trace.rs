@@ -17,7 +17,10 @@ use nix::unistd::Pid;
 use serde::Serialize;
 use spawn_ptrace::CommandPtraceSpawn;
 
+use crate::dump;
+
 const MAX_INSTR_LEN: usize = 15;
+const RFLAGS_RESERVED_MASK: u64 = 2;
 const RFLAGS_IF_MASK: u64 = 512;
 
 pub trait CommandPersonality {
@@ -402,10 +405,16 @@ impl<'a> Tracee<'a> {
     fn tracee_regs(&mut self) -> Result<()> {
         self.register_file = RegisterFile::from(ptrace::getregs(self.tracee_pid)?);
 
-        // The IF flag is purely a remnant of our tracer (since we're single-stepping),
-        // so clear it for maximum fidelity when we're tracing for Tiny86.
         if self.tracer.tiny86_only {
+            // The IF flag is purely a remnant of our tracer (since we're single-stepping),
+            // so clear it for maximum fidelity when we're tracing for Tiny86.
             self.register_file.rflags &= !RFLAGS_IF_MASK;
+
+            // Similarly: `ptrace(PTRACE_GETREGS, ...)` seems to be slightly bugged on
+            // x86-64 Linux, and returns `rflags: 0` at process start. This
+            // is architecturally impossible (`rflags >= 2` because of the reserved bit),
+            // so we just fix it up here.
+            self.register_file.rflags |= RFLAGS_RESERVED_MASK;
         }
 
         Ok(())
@@ -658,7 +667,19 @@ pub struct Tracer {
 impl From<&clap::ArgMatches> for Tracer {
     fn from(matches: &clap::ArgMatches) -> Self {
         let target = if let Some(pid) = matches.value_of("tracee-pid") {
-            Target::Process(Pid::from_raw(pid.parse().unwrap()))
+            let pid = Pid::from_raw(pid.parse().unwrap());
+
+            // If we're starting from a PID, then we need to create
+            // a dump of the current memory state. Do that now.
+            let dump_name = matches
+                .value_of("memory-file")
+                .map(Into::into)
+                .unwrap_or_else(|| format!("{}.memory", pid));
+
+            // There's no sense in proceeding if the dump fails.
+            dump::dump(pid, &dump_name).unwrap();
+
+            Target::Process(pid)
         } else {
             Target::Program(
                 matches.value_of("tracee-name").map(Into::into).unwrap(),
@@ -701,7 +722,7 @@ impl Tracer {
                 Pid::from_raw(child.id() as i32)
             }
             Target::Process(pid) => {
-                ptrace::attach(*pid)?;
+                ptrace::attach(*pid).with_context(|| format!("couldn't attach to {}", pid))?;
                 *pid
             }
         };
@@ -839,6 +860,7 @@ mod tests {
         alu_add_neg,
         jmp,
         lea,
+        loop_,
         memops,
         mov_r_r,
         push_pop,
