@@ -1,6 +1,7 @@
 MTTN := cargo run --quiet --bin mttn --
 
 ASM_TESTS := \
+	cdq \
 	memops \
 	stosb \
 	stosw \
