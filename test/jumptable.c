@@ -10,13 +10,13 @@ int mul(int x, int y) {
   return x * y;
 }
 
-int div(int x, int y) {
-  return x / y;
+int dbl(int x, int y) {
+  return (x + y) << 1;
 }
 
 typedef int (*handler)(int, int);
 
-handler table[4] = { add, sub, mul, div };
+handler table[4] = { add, sub, mul, dbl };
 
 int dispatch(int op, int x, int y) {
   return table[op](x, y);
