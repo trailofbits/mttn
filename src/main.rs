@@ -2,7 +2,7 @@ use std::io::{stderr, stdout, Write};
 use std::process;
 
 use anyhow::{anyhow, Result};
-use clap::{App, Arg, ArgGroup};
+use clap::{Arg, ArgGroup, Command};
 
 mod dump;
 mod tiny86;
@@ -10,8 +10,8 @@ mod trace;
 
 use tiny86::{Bitstring, Tiny86Write};
 
-fn app() -> App<'static> {
-    App::new(env!("CARGO_PKG_NAME"))
+fn app() -> Command<'static> {
+    Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .arg(
