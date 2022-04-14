@@ -602,7 +602,7 @@ impl<'a> Tracee<'a> {
         Ok(hints)
     }
 
-    fn tracee_hints_stage2(&self, hints: &mut Vec<MemoryHint>) -> Result<()> {
+    fn tracee_hints_stage2(&self, hints: &mut [MemoryHint]) -> Result<()> {
         log::debug!("memory hints stage 2");
 
         for hint in hints.iter_mut() {
