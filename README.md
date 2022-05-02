@@ -51,3 +51,12 @@ Once you have those installed, running the tests should be as simple as:
 ```bash
 $ cargo test
 ```
+
+## Distribution and Licensing
+
+The views, opinions, and/or findings expressed are those of the author(s) and
+should not be interpreted as representing the official views or policies of the
+Department of Defense or the U.S. Government.
+
+*mttn* is licensed under the GNU AGPLv3 License. A copy of the terms can
+be found in the [LICENSE](./LICENSE) file.
