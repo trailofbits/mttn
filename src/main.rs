@@ -50,7 +50,7 @@ fn app() -> Command<'static> {
                 .long("syscall-model")
                 .possible_values(&["decree", "linux32"])
                 .default_value("decree")
-                .requires("tiny86-only")
+                .requires("tiny86-only"),
         )
         .arg(
             Arg::new("debug-on-fault")

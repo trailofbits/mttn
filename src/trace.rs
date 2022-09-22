@@ -62,7 +62,6 @@ impl TryFrom<u32> for DecreeSyscall {
     }
 }
 
-
 /// Represents the width of a concrete memory operation.
 ///
 /// All `mttn` memory operations are 1, 2, 4, or 8 bytes.
@@ -145,9 +144,10 @@ pub struct Step {
 
 /// Represents the (usermode) register file.
 ///
-/// Only the standard addressable registers, plus `RFLAGS`, are tracked.
-/// `mttn` assumes that all segment base addresses are `0` and therefore doesn't
-/// track them.
+/// Only the standard addressable registers, plus `RFLAGS`, are recorded.
+///
+/// Other registers are tracked as an implementation detail, but are not
+/// recorded in each trace step.
 #[derive(Clone, Copy, Debug, Default, Derivative, PartialEq, Serialize)]
 pub struct RegisterFile {
     pub rax: u64,
@@ -172,8 +172,14 @@ pub struct RegisterFile {
     pub rflags: u64,
     pub fs_base: u64,
     pub gs_base: u64,
-    // TODO: Is this needed?
+    // TODO: Are this needed?
     pub orig_rax: u64,
+    pub cs: u64,
+    pub ds: u64,
+    pub es: u64,
+    pub fs: u64,
+    pub gs: u64,
+    pub ss: u64,
 }
 
 impl RegisterFile {
@@ -298,6 +304,12 @@ impl From<libc::user_regs_struct> for RegisterFile {
             fs_base: user_regs.fs_base,
             gs_base: user_regs.gs_base,
             orig_rax: user_regs.orig_rax,
+            cs: user_regs.cs,
+            ds: user_regs.ds,
+            es: user_regs.es,
+            fs: user_regs.fs,
+            gs: user_regs.gs,
+            ss: user_regs.ss,
         }
     }
 }
@@ -325,13 +337,13 @@ impl From<&RegisterFile> for libc::user_regs_struct {
             eflags: regfile.rflags,
             fs_base: regfile.fs_base,
             gs_base: regfile.gs_base,
-            cs: 0,
-            ds: 0,
-            es: 0,
-            fs: 0,
-            gs: 0,
-            ss: 0,
             orig_rax: regfile.orig_rax,
+            cs: regfile.cs,
+            ds: regfile.ds,
+            es: regfile.es,
+            fs: regfile.fs,
+            gs: regfile.gs,
+            ss: regfile.ss,
         }
     }
 }
@@ -413,7 +425,7 @@ impl<'a> Tracee<'a> {
                 log::debug!("still alive");
             }
             s => {
-                log::debug!("{:?}", s);
+                log::debug!("terminating with {:?}", s);
                 self.terminated = true;
             }
         }
@@ -485,8 +497,12 @@ impl<'a> Tracee<'a> {
     fn do_syscall(&mut self, instr: &Instruction, syscall: u32) -> Result<()> {
         if self.tracer.decree_syscalls {
             let syscall = DecreeSyscall::try_from(syscall)?;
-
             log::debug!("selected {:?}", syscall);
+
+            match syscall {
+                DecreeSyscall::Terminate => ptrace::kill(self.tracee_pid)?,
+                _ => unimplemented!(),
+            }
         } else {
             // Linux x86 syscalls.
             unimplemented!();
@@ -495,9 +511,12 @@ impl<'a> Tracee<'a> {
         // Jump right over the syscall.
         let mut user_regs = libc::user_regs_struct::from(&self.register_file);
         user_regs.rip += instr.len() as u64;
-        ptrace::setregs(self.tracee_pid, user_regs)?;
+        log::debug!("jumping to: {:x}", user_regs.rip);
+        ptrace::setregs(self.tracee_pid, user_regs)
+            .with_context(|| "Fault: failed to set tracee register state")?;
 
-        ptrace::cont(self.tracee_pid, None)?;
+        ptrace::step(self.tracee_pid, None)
+            .with_context(|| "Fault: resuming program after syscall")?;
 
         Ok(())
     }
