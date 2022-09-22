@@ -418,6 +418,13 @@ impl<'a> Tracee<'a> {
             }
             wait::WaitStatus::Signaled(_, signal, _) => {
                 log::debug!("signaled: {:?}", signal);
+
+                // We might be receiving a SIGKILL because our parent has killed
+                // us; this can happen in normal operation because of how
+                // we currently model DECREE's terminate(2) syscall.
+                if signal == signal::Signal::SIGKILL {
+                    self.terminated = true;
+                }
             }
             wait::WaitStatus::Stopped(_, signal) => {
                 log::debug!("stopped with {:?}", signal);
@@ -443,9 +450,7 @@ impl<'a> Tracee<'a> {
             self.tiny86_checks(&instr)?;
         }
 
-        // Hints are generated in two phases: we build a complete list of
-        // expected hints (including all Read hints) in stage 1...
-        let mut hints = self.tracee_hints_stage1(&instr)?;
+        let mut hints = vec![];
 
         if self.tracer.tiny86_only && instr.mnemonic() == Mnemonic::Int {
             log::debug!("tiny86: entering syscall");
@@ -461,6 +466,10 @@ impl<'a> Tracee<'a> {
 
             self.do_syscall(&instr, syscall as u32)?;
         } else {
+            // Hints are generated in two phases: we build a complete list of
+            // expected hints (including all Read hints) in stage 1...
+            self.tracee_hints_stage1(&instr, &mut hints)?;
+
             // TODO(ww): Check `instr` here and perform one of two cases:
             // 1. If `instr` is an instruction that benefits from modeling/emulation
             //    (e.g. `MOVS`), then emulate it and generate its memory hints
@@ -479,11 +488,12 @@ impl<'a> Tracee<'a> {
                 // TODO(ww): Longer term, we should just model REP'd instructions outright.
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
+
+            // ...then, after we've stepped the program, we fill in the data
+            // associated with each Write hint in stage 2.
+            self.tracee_hints_stage2(&mut hints)?;
         }
 
-        // ...then, after we've stepped the program, we fill in the data
-        // associated with each Write hint in stage 2.
-        self.tracee_hints_stage2(&mut hints)?;
         self.wait()?;
 
         #[allow(clippy::redundant_field_names)]
@@ -651,10 +661,8 @@ impl<'a> Tracee<'a> {
         })
     }
 
-    fn tracee_hints_stage1(&mut self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
+    fn tracee_hints_stage1(&mut self, instr: &Instruction, hints: &mut Vec<MemoryHint>) -> Result<()> {
         log::debug!("memory hints stage 1");
-        let mut hints = vec![];
-
         let info = self
             .info_factory
             .info_options(instr, InstructionInfoOptions::NO_REGISTER_USAGE)
@@ -727,7 +735,7 @@ impl<'a> Tracee<'a> {
             }
         }
 
-        Ok(hints)
+        Ok(())
     }
 
     fn tracee_hints_stage2(&self, hints: &mut [MemoryHint]) -> Result<()> {
@@ -908,8 +916,8 @@ mod tests {
 
         Tracer {
             ignore_unsupported_memops: false,
-            tiny86_only: false,
-            decree_syscalls: false,
+            tiny86_only: true,
+            decree_syscalls: true,
             debug_on_fault: false,
             disable_aslr: true,
             bitness: 32,
