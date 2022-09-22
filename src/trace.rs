@@ -469,7 +469,7 @@ impl<'a> Tracee<'a> {
             //    then phase 2).
             ptrace::step(self.tracee_pid, None)?;
 
-            if instr.is_string_instruction() {
+            if instr.is_string_instruction() || instr.is_stack_instruction() {
                 // NOTE(ww): By default, recent-ish x86 CPUs execute MOVS and STOS
                 // in "fast string operation" mode. This can cause stores to not appear
                 // when we expect them to, since they can be executed out-of-order.
@@ -909,6 +909,7 @@ mod tests {
         Tracer {
             ignore_unsupported_memops: false,
             tiny86_only: false,
+            decree_syscalls: false,
             debug_on_fault: false,
             disable_aslr: true,
             bitness: 32,
