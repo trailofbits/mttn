@@ -8,6 +8,7 @@ use iced_x86::{
     Code, Decoder, DecoderOptions, Instruction, InstructionInfoFactory, InstructionInfoOptions,
     MemorySize, Mnemonic, OpAccess, Register,
 };
+use nix::errno::Errno;
 use nix::sys::personality::{self, Persona};
 use nix::sys::ptrace;
 use nix::sys::signal;
@@ -415,8 +416,8 @@ impl<'a> Tracee<'a> {
                 log::debug!("exited with {}", status);
                 self.terminated = true;
             }
-            wait::WaitStatus::Signaled(_, _, _) => {
-                log::debug!("signaled");
+            wait::WaitStatus::Signaled(_, signal, _) => {
+                log::debug!("signaled: {:?}", signal);
             }
             wait::WaitStatus::Stopped(_, signal) => {
                 log::debug!("stopped with {:?}", signal);
@@ -459,7 +460,6 @@ impl<'a> Tracee<'a> {
             log::debug!("requested syscall {}", syscall);
 
             self.do_syscall(&instr, syscall as u32)?;
-            // unimplemented!();
         } else {
             // TODO(ww): Check `instr` here and perform one of two cases:
             // 1. If `instr` is an instruction that benefits from modeling/emulation
@@ -501,22 +501,30 @@ impl<'a> Tracee<'a> {
 
             match syscall {
                 DecreeSyscall::Terminate => ptrace::kill(self.tracee_pid)?,
-                _ => unimplemented!(),
+                _ => return Err(anyhow!("unimplemented DECREE syscall: {:?}", syscall)),
             }
         } else {
             // Linux x86 syscalls.
-            unimplemented!();
+            return Err(anyhow!("Linux syscalls are completely unimplemented!"));
         }
 
         // Jump right over the syscall.
         let mut user_regs = libc::user_regs_struct::from(&self.register_file);
         user_regs.rip += instr.len() as u64;
         log::debug!("jumping to: {:x}", user_regs.rip);
-        ptrace::setregs(self.tracee_pid, user_regs)
-            .with_context(|| "Fault: failed to set tracee register state")?;
 
-        ptrace::step(self.tracee_pid, None)
-            .with_context(|| "Fault: resuming program after syscall")?;
+        // We might have killed the program immediately above, in which case
+        // this will fail with ESRCH because the process has disappeared.
+        // This is an expected case, so we swallow the error and expect
+        // the calling context to handle the process exit cleanly.
+        match ptrace::setregs(self.tracee_pid, user_regs) {
+            Ok(_) => ptrace::step(self.tracee_pid, None)
+                .with_context(|| "Fault: resuming program after syscall")?,
+            Err(Errno::ESRCH) => {
+                log::debug!("process disappeared!")
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         Ok(())
     }
