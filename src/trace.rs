@@ -661,7 +661,11 @@ impl<'a> Tracee<'a> {
         })
     }
 
-    fn tracee_hints_stage1(&mut self, instr: &Instruction, hints: &mut Vec<MemoryHint>) -> Result<()> {
+    fn tracee_hints_stage1(
+        &mut self,
+        instr: &Instruction,
+        hints: &mut Vec<MemoryHint>,
+    ) -> Result<()> {
         log::debug!("memory hints stage 1");
         let info = self
             .info_factory
