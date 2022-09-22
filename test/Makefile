@@ -17,7 +17,8 @@ ASM_TESTS := \
 	rol \
 	jmp \
 	push_pop \
-	push_pop2
+	push_pop2 \
+	tinysyscall
 
 C_TESTS := \
 	seteip \
@@ -61,11 +62,13 @@ trace-jsonls: $(TRACE_JSONLS)
 .PHONY: trace-texts
 trace-texts: $(TRACE_TEXTS)
 
+.DELETE_ON_ERROR:
 %.trace.jsonl: %.elf
-	$(MTTN) -At -m32 -F jsonl ./$< > $@
+	$(MTTN) -At --syscall-model=decree -m32 -F jsonl ./$< > $@
 
+.DELETE_ON_ERROR:
 %.trace.txt: %.elf
-	$(MTTN) -At -m32 -F tiny86-text ./$< > $@
+	$(MTTN) -At --syscall-model=decree -m32 -F tiny86-text ./$< > $@
 
 .PHONY: clean
 clean:
