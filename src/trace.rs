@@ -172,6 +172,8 @@ pub struct RegisterFile {
     pub rflags: u64,
     pub fs_base: u64,
     pub gs_base: u64,
+    // TODO: Is this needed?
+    pub orig_rax: u64,
 }
 
 impl RegisterFile {
@@ -295,6 +297,41 @@ impl From<libc::user_regs_struct> for RegisterFile {
             rflags: user_regs.eflags,
             fs_base: user_regs.fs_base,
             gs_base: user_regs.gs_base,
+            orig_rax: user_regs.orig_rax,
+        }
+    }
+}
+
+impl From<&RegisterFile> for libc::user_regs_struct {
+    fn from(regfile: &RegisterFile) -> Self {
+        Self {
+            rax: regfile.rax,
+            rbx: regfile.rbx,
+            rcx: regfile.rcx,
+            rdx: regfile.rdx,
+            rsi: regfile.rsi,
+            rdi: regfile.rdi,
+            rsp: regfile.rsp,
+            rbp: regfile.rbp,
+            r8: regfile.r8,
+            r9: regfile.r9,
+            r10: regfile.r10,
+            r11: regfile.r11,
+            r12: regfile.r12,
+            r13: regfile.r13,
+            r14: regfile.r14,
+            r15: regfile.r15,
+            rip: regfile.rip,
+            eflags: regfile.rflags,
+            fs_base: regfile.fs_base,
+            gs_base: regfile.gs_base,
+            cs: 0,
+            ds: 0,
+            es: 0,
+            fs: 0,
+            gs: 0,
+            ss: 0,
+            orig_rax: regfile.orig_rax,
         }
     }
 }
@@ -409,7 +446,7 @@ impl<'a> Tracee<'a> {
             let syscall = self.register_file.rax;
             log::debug!("requested syscall {}", syscall);
 
-            self.do_syscall(syscall as u32)?;
+            self.do_syscall(&instr, syscall as u32)?;
             // unimplemented!();
         } else {
             // TODO(ww): Check `instr` here and perform one of two cases:
@@ -445,7 +482,7 @@ impl<'a> Tracee<'a> {
         })
     }
 
-    fn do_syscall(&mut self, syscall: u32) -> Result<()> {
+    fn do_syscall(&mut self, instr: &Instruction, syscall: u32) -> Result<()> {
         if self.tracer.decree_syscalls {
             let syscall = DecreeSyscall::try_from(syscall)?;
 
@@ -454,6 +491,13 @@ impl<'a> Tracee<'a> {
             // Linux x86 syscalls.
             unimplemented!();
         }
+
+        // Jump right over the syscall.
+        let mut user_regs = libc::user_regs_struct::from(&self.register_file);
+        user_regs.rip += instr.len() as u64;
+        ptrace::setregs(self.tracee_pid, user_regs)?;
+
+        ptrace::cont(self.tracee_pid, None)?;
 
         Ok(())
     }
