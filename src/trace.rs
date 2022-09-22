@@ -34,7 +34,7 @@ impl CommandPersonality for Command {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Serialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
 #[repr(u8)]
 pub enum DecreeSyscall {
     Terminate = 1,
@@ -68,7 +68,7 @@ impl TryFrom<u32> for DecreeSyscall {
 /// All `mttn` memory operations are 1, 2, 4, or 8 bytes.
 /// Larger operations are either modeled as multiple individual operations
 /// (if caused by a `REP` prefix), ignored (if configured), or cause a fatal error.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[repr(u8)]
 pub enum MemoryMask {
     Byte,
@@ -116,7 +116,7 @@ impl TryFrom<Register> for MemoryMask {
 /// perform a read-and-update are modeled with two separate operations.
 /// Instructions that perform conditional reads or writes are modeled only
 /// if the conditional memory operation actually took place during the trace.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[repr(u8)]
 pub enum MemoryOp {
     Read,
@@ -125,7 +125,7 @@ pub enum MemoryOp {
 
 /// Represents an entire traced memory operation, including its kind (`MemoryOp`),
 /// size (`MemoryMask`), concrete address, and actual read or written data.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct MemoryHint {
     pub address: u64,
     pub operation: MemoryOp,
@@ -136,7 +136,7 @@ pub struct MemoryHint {
 /// Represents an individual step in the trace, including the raw instruction bytes,
 /// the register file state before execution, and any memory operations that result
 /// from execution.
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Step {
     pub instr: Vec<u8>,
     pub regs: RegisterFile,
@@ -149,7 +149,7 @@ pub struct Step {
 ///
 /// Other registers are tracked as an implementation detail, but are not
 /// recorded in each trace step.
-#[derive(Clone, Copy, Debug, Default, Derivative, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Derivative, PartialEq, Eq, Serialize)]
 pub struct RegisterFile {
     pub rax: u64,
     pub rbx: u64,
