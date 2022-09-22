@@ -33,6 +33,36 @@ impl CommandPersonality for Command {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Serialize)]
+#[repr(u8)]
+pub enum DecreeSyscall {
+    Terminate = 1,
+    Transmit = 2,
+    Recieve = 3,
+    Fdwait = 4,
+    Allocate = 5,
+    Deallocate = 6,
+    Random = 7,
+}
+
+impl TryFrom<u32> for DecreeSyscall {
+    type Error = anyhow::Error;
+
+    fn try_from(syscall: u32) -> Result<Self> {
+        Ok(match syscall {
+            1 => Self::Terminate,
+            2 => Self::Transmit,
+            3 => Self::Recieve,
+            4 => Self::Fdwait,
+            5 => Self::Allocate,
+            6 => Self::Deallocate,
+            7 => Self::Random,
+            _ => return Err(anyhow!("unknown DECREE syscall: {}", syscall)),
+        })
+    }
+}
+
+
 /// Represents the width of a concrete memory operation.
 ///
 /// All `mttn` memory operations are 1, 2, 4, or 8 bytes.
@@ -363,34 +393,48 @@ impl<'a> Tracee<'a> {
             self.tiny86_checks(&instr)?;
         }
 
-        // TODO(ww): Check `instr` here and perform one of two cases:
-        // 1. If `instr` is an instruction that benefits from modeling/emulation
-        //    (e.g. `MOVS`), then emulate it and generate its memory hints
-        //    from the emulation.
-        // 2. Otherwise, generate the hints as normal (do phase 1, single-step,
-        //    then phase 2).
-
         // Hints are generated in two phases: we build a complete list of
         // expected hints (including all Read hints) in stage 1...
         let mut hints = self.tracee_hints_stage1(&instr)?;
 
-        ptrace::step(self.tracee_pid, None)?;
+        if self.tracer.tiny86_only && instr.mnemonic() == Mnemonic::Int {
+            log::debug!("tiny86: entering syscall");
 
-        if instr.is_string_instruction() {
-            // NOTE(ww): By default, recent-ish x86 CPUs execute MOVS and STOS
-            // in "fast string operation" mode. This can cause stores to not appear
-            // when we expect them to, since they can be executed out-of-order.
-            // The "correct" fix for this is probably to toggle the
-            // fast-string-enable bit (0b) in the IA32_MISC_ENABLE MSR, but we just sleep
-            // for a bit to give the CPU a chance to catch up.
-            // TODO(ww): Longer term, we should just model REP'd instructions outright.
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            // We only support INT 80h, since that's the standard syscall
+            // vector on 32-bit Linux.
+            if instr.immediate8() != 0x80 {
+                return Err(anyhow!("invalid interrupt: not syscall"));
+            }
+
+            let syscall = self.register_file.rax;
+            log::debug!("requested syscall {}", syscall);
+
+            self.do_syscall(syscall as u32)?;
+            // unimplemented!();
+        } else {
+            // TODO(ww): Check `instr` here and perform one of two cases:
+            // 1. If `instr` is an instruction that benefits from modeling/emulation
+            //    (e.g. `MOVS`), then emulate it and generate its memory hints
+            //    from the emulation.
+            // 2. Otherwise, generate the hints as normal (do phase 1, single-step,
+            //    then phase 2).
+            ptrace::step(self.tracee_pid, None)?;
+
+            if instr.is_string_instruction() {
+                // NOTE(ww): By default, recent-ish x86 CPUs execute MOVS and STOS
+                // in "fast string operation" mode. This can cause stores to not appear
+                // when we expect them to, since they can be executed out-of-order.
+                // The "correct" fix for this is probably to toggle the
+                // fast-string-enable bit (0b) in the IA32_MISC_ENABLE MSR, but we just sleep
+                // for a bit to give the CPU a chance to catch up.
+                // TODO(ww): Longer term, we should just model REP'd instructions outright.
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
         }
 
         // ...then, after we've stepped the program, we fill in the data
         // associated with each Write hint in stage 2.
         self.tracee_hints_stage2(&mut hints)?;
-
         self.wait()?;
 
         #[allow(clippy::redundant_field_names)]
@@ -399,6 +443,19 @@ impl<'a> Tracee<'a> {
             regs: self.register_file,
             hints: hints,
         })
+    }
+
+    fn do_syscall(&mut self, syscall: u32) -> Result<()> {
+        if self.tracer.decree_syscalls {
+            let syscall = DecreeSyscall::try_from(syscall)?;
+
+            log::debug!("selected {:?}", syscall);
+        } else {
+            // Linux x86 syscalls.
+            unimplemented!();
+        }
+
+        Ok(())
     }
 
     /// Loads the our register file from the tracee's user register state.
@@ -658,6 +715,7 @@ impl Iterator for Tracee<'_> {
 pub struct Tracer {
     pub ignore_unsupported_memops: bool,
     pub tiny86_only: bool,
+    pub decree_syscalls: bool,
     pub debug_on_fault: bool,
     pub disable_aslr: bool,
     pub bitness: u32,
@@ -694,6 +752,7 @@ impl From<&clap::ArgMatches> for Tracer {
         Self {
             ignore_unsupported_memops: matches.is_present("ignore-unsupported-memops"),
             tiny86_only: matches.is_present("tiny86-only"),
+            decree_syscalls: matches.value_of("syscall-model").unwrap() == "decree",
             debug_on_fault: matches.is_present("debug-on-fault"),
             disable_aslr: matches.is_present("disable-aslr"),
             bitness: matches.value_of("mode").unwrap().parse().unwrap(),
