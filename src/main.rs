@@ -45,6 +45,14 @@ fn app() -> Command<'static> {
                 .long("tiny86-only"),
         )
         .arg(
+            Arg::new("syscall-model")
+                .help("For Tiny86: which syscall model to use when emulating syscalls")
+                .long("syscall-model")
+                .possible_values(&["decree", "linux32"])
+                .default_value("decree")
+                .requires("tiny86-only"),
+        )
+        .arg(
             Arg::new("debug-on-fault")
                 .help("Suspend the tracee and detach if a memory access faults")
                 .short('d')

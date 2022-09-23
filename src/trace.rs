@@ -8,6 +8,7 @@ use iced_x86::{
     Code, Decoder, DecoderOptions, Instruction, InstructionInfoFactory, InstructionInfoOptions,
     MemorySize, Mnemonic, OpAccess, Register,
 };
+use nix::errno::Errno;
 use nix::sys::personality::{self, Persona};
 use nix::sys::ptrace;
 use nix::sys::signal;
@@ -33,12 +34,41 @@ impl CommandPersonality for Command {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
+#[repr(u8)]
+pub enum DecreeSyscall {
+    Terminate = 1,
+    Transmit = 2,
+    Recieve = 3,
+    Fdwait = 4,
+    Allocate = 5,
+    Deallocate = 6,
+    Random = 7,
+}
+
+impl TryFrom<u32> for DecreeSyscall {
+    type Error = anyhow::Error;
+
+    fn try_from(syscall: u32) -> Result<Self> {
+        Ok(match syscall {
+            1 => Self::Terminate,
+            2 => Self::Transmit,
+            3 => Self::Recieve,
+            4 => Self::Fdwait,
+            5 => Self::Allocate,
+            6 => Self::Deallocate,
+            7 => Self::Random,
+            _ => return Err(anyhow!("unknown DECREE syscall: {}", syscall)),
+        })
+    }
+}
+
 /// Represents the width of a concrete memory operation.
 ///
 /// All `mttn` memory operations are 1, 2, 4, or 8 bytes.
 /// Larger operations are either modeled as multiple individual operations
 /// (if caused by a `REP` prefix), ignored (if configured), or cause a fatal error.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[repr(u8)]
 pub enum MemoryMask {
     Byte,
@@ -86,7 +116,7 @@ impl TryFrom<Register> for MemoryMask {
 /// perform a read-and-update are modeled with two separate operations.
 /// Instructions that perform conditional reads or writes are modeled only
 /// if the conditional memory operation actually took place during the trace.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[repr(u8)]
 pub enum MemoryOp {
     Read,
@@ -95,7 +125,7 @@ pub enum MemoryOp {
 
 /// Represents an entire traced memory operation, including its kind (`MemoryOp`),
 /// size (`MemoryMask`), concrete address, and actual read or written data.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct MemoryHint {
     pub address: u64,
     pub operation: MemoryOp,
@@ -106,7 +136,7 @@ pub struct MemoryHint {
 /// Represents an individual step in the trace, including the raw instruction bytes,
 /// the register file state before execution, and any memory operations that result
 /// from execution.
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Step {
     pub instr: Vec<u8>,
     pub regs: RegisterFile,
@@ -115,10 +145,11 @@ pub struct Step {
 
 /// Represents the (usermode) register file.
 ///
-/// Only the standard addressable registers, plus `RFLAGS`, are tracked.
-/// `mttn` assumes that all segment base addresses are `0` and therefore doesn't
-/// track them.
-#[derive(Clone, Copy, Debug, Default, Derivative, PartialEq, Serialize)]
+/// Only the standard addressable registers, plus `RFLAGS`, are recorded.
+///
+/// Other registers are tracked as an implementation detail, but are not
+/// recorded in each trace step.
+#[derive(Clone, Copy, Debug, Default, Derivative, PartialEq, Eq, Serialize)]
 pub struct RegisterFile {
     pub rax: u64,
     pub rbx: u64,
@@ -142,6 +173,14 @@ pub struct RegisterFile {
     pub rflags: u64,
     pub fs_base: u64,
     pub gs_base: u64,
+    // TODO: Are this needed?
+    pub orig_rax: u64,
+    pub cs: u64,
+    pub ds: u64,
+    pub es: u64,
+    pub fs: u64,
+    pub gs: u64,
+    pub ss: u64,
 }
 
 impl RegisterFile {
@@ -265,6 +304,47 @@ impl From<libc::user_regs_struct> for RegisterFile {
             rflags: user_regs.eflags,
             fs_base: user_regs.fs_base,
             gs_base: user_regs.gs_base,
+            orig_rax: user_regs.orig_rax,
+            cs: user_regs.cs,
+            ds: user_regs.ds,
+            es: user_regs.es,
+            fs: user_regs.fs,
+            gs: user_regs.gs,
+            ss: user_regs.ss,
+        }
+    }
+}
+
+impl From<&RegisterFile> for libc::user_regs_struct {
+    fn from(regfile: &RegisterFile) -> Self {
+        Self {
+            rax: regfile.rax,
+            rbx: regfile.rbx,
+            rcx: regfile.rcx,
+            rdx: regfile.rdx,
+            rsi: regfile.rsi,
+            rdi: regfile.rdi,
+            rsp: regfile.rsp,
+            rbp: regfile.rbp,
+            r8: regfile.r8,
+            r9: regfile.r9,
+            r10: regfile.r10,
+            r11: regfile.r11,
+            r12: regfile.r12,
+            r13: regfile.r13,
+            r14: regfile.r14,
+            r15: regfile.r15,
+            rip: regfile.rip,
+            eflags: regfile.rflags,
+            fs_base: regfile.fs_base,
+            gs_base: regfile.gs_base,
+            orig_rax: regfile.orig_rax,
+            cs: regfile.cs,
+            ds: regfile.ds,
+            es: regfile.es,
+            fs: regfile.fs,
+            gs: regfile.gs,
+            ss: regfile.ss,
         }
     }
 }
@@ -336,8 +416,15 @@ impl<'a> Tracee<'a> {
                 log::debug!("exited with {}", status);
                 self.terminated = true;
             }
-            wait::WaitStatus::Signaled(_, _, _) => {
-                log::debug!("signaled");
+            wait::WaitStatus::Signaled(_, signal, _) => {
+                log::debug!("signaled: {:?}", signal);
+
+                // We might be receiving a SIGKILL because our parent has killed
+                // us; this can happen in normal operation because of how
+                // we currently model DECREE's terminate(2) syscall.
+                if signal == signal::Signal::SIGKILL {
+                    self.terminated = true;
+                }
             }
             wait::WaitStatus::Stopped(_, signal) => {
                 log::debug!("stopped with {:?}", signal);
@@ -346,7 +433,7 @@ impl<'a> Tracee<'a> {
                 log::debug!("still alive");
             }
             s => {
-                log::debug!("{:?}", s);
+                log::debug!("terminating with {:?}", s);
                 self.terminated = true;
             }
         }
@@ -363,33 +450,49 @@ impl<'a> Tracee<'a> {
             self.tiny86_checks(&instr)?;
         }
 
-        // TODO(ww): Check `instr` here and perform one of two cases:
-        // 1. If `instr` is an instruction that benefits from modeling/emulation
-        //    (e.g. `MOVS`), then emulate it and generate its memory hints
-        //    from the emulation.
-        // 2. Otherwise, generate the hints as normal (do phase 1, single-step,
-        //    then phase 2).
+        let mut hints = vec![];
 
-        // Hints are generated in two phases: we build a complete list of
-        // expected hints (including all Read hints) in stage 1...
-        let mut hints = self.tracee_hints_stage1(&instr)?;
+        if self.tracer.tiny86_only && instr.mnemonic() == Mnemonic::Int {
+            log::debug!("tiny86: entering syscall");
 
-        ptrace::step(self.tracee_pid, None)?;
+            // We only support INT 80h, since that's the standard syscall
+            // vector on 32-bit Linux.
+            if instr.immediate8() != 0x80 {
+                return Err(anyhow!("invalid interrupt: not syscall"));
+            }
 
-        if instr.is_string_instruction() {
-            // NOTE(ww): By default, recent-ish x86 CPUs execute MOVS and STOS
-            // in "fast string operation" mode. This can cause stores to not appear
-            // when we expect them to, since they can be executed out-of-order.
-            // The "correct" fix for this is probably to toggle the
-            // fast-string-enable bit (0b) in the IA32_MISC_ENABLE MSR, but we just sleep
-            // for a bit to give the CPU a chance to catch up.
-            // TODO(ww): Longer term, we should just model REP'd instructions outright.
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            let syscall = self.register_file.rax;
+            log::debug!("requested syscall {}", syscall);
+
+            self.do_syscall(&instr, syscall as u32)?;
+        } else {
+            // Hints are generated in two phases: we build a complete list of
+            // expected hints (including all Read hints) in stage 1...
+            self.tracee_hints_stage1(&instr, &mut hints)?;
+
+            // TODO(ww): Check `instr` here and perform one of two cases:
+            // 1. If `instr` is an instruction that benefits from modeling/emulation
+            //    (e.g. `MOVS`), then emulate it and generate its memory hints
+            //    from the emulation.
+            // 2. Otherwise, generate the hints as normal (do phase 1, single-step,
+            //    then phase 2).
+            ptrace::step(self.tracee_pid, None)?;
+
+            if instr.is_string_instruction() || instr.is_stack_instruction() {
+                // NOTE(ww): By default, recent-ish x86 CPUs execute MOVS and STOS
+                // in "fast string operation" mode. This can cause stores to not appear
+                // when we expect them to, since they can be executed out-of-order.
+                // The "correct" fix for this is probably to toggle the
+                // fast-string-enable bit (0b) in the IA32_MISC_ENABLE MSR, but we just sleep
+                // for a bit to give the CPU a chance to catch up.
+                // TODO(ww): Longer term, we should just model REP'd instructions outright.
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+
+            // ...then, after we've stepped the program, we fill in the data
+            // associated with each Write hint in stage 2.
+            self.tracee_hints_stage2(&mut hints)?;
         }
-
-        // ...then, after we've stepped the program, we fill in the data
-        // associated with each Write hint in stage 2.
-        self.tracee_hints_stage2(&mut hints)?;
 
         self.wait()?;
 
@@ -399,6 +502,41 @@ impl<'a> Tracee<'a> {
             regs: self.register_file,
             hints: hints,
         })
+    }
+
+    fn do_syscall(&mut self, instr: &Instruction, syscall: u32) -> Result<()> {
+        if self.tracer.decree_syscalls {
+            let syscall = DecreeSyscall::try_from(syscall)?;
+            log::debug!("selected {:?}", syscall);
+
+            match syscall {
+                DecreeSyscall::Terminate => ptrace::kill(self.tracee_pid)?,
+                _ => return Err(anyhow!("unimplemented DECREE syscall: {:?}", syscall)),
+            }
+        } else {
+            // Linux x86 syscalls.
+            return Err(anyhow!("Linux syscalls are completely unimplemented!"));
+        }
+
+        // Jump right over the syscall.
+        let mut user_regs = libc::user_regs_struct::from(&self.register_file);
+        user_regs.rip += instr.len() as u64;
+        log::debug!("jumping to: {:x}", user_regs.rip);
+
+        // We might have killed the program immediately above, in which case
+        // this will fail with ESRCH because the process has disappeared.
+        // This is an expected case, so we swallow the error and expect
+        // the calling context to handle the process exit cleanly.
+        match ptrace::setregs(self.tracee_pid, user_regs) {
+            Ok(_) => ptrace::step(self.tracee_pid, None)
+                .with_context(|| "Fault: resuming program after syscall")?,
+            Err(Errno::ESRCH) => {
+                log::debug!("process disappeared!")
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        Ok(())
     }
 
     /// Loads the our register file from the tracee's user register state.
@@ -523,10 +661,12 @@ impl<'a> Tracee<'a> {
         })
     }
 
-    fn tracee_hints_stage1(&mut self, instr: &Instruction) -> Result<Vec<MemoryHint>> {
+    fn tracee_hints_stage1(
+        &mut self,
+        instr: &Instruction,
+        hints: &mut Vec<MemoryHint>,
+    ) -> Result<()> {
         log::debug!("memory hints stage 1");
-        let mut hints = vec![];
-
         let info = self
             .info_factory
             .info_options(instr, InstructionInfoOptions::NO_REGISTER_USAGE)
@@ -599,7 +739,7 @@ impl<'a> Tracee<'a> {
             }
         }
 
-        Ok(hints)
+        Ok(())
     }
 
     fn tracee_hints_stage2(&self, hints: &mut [MemoryHint]) -> Result<()> {
@@ -658,6 +798,7 @@ impl Iterator for Tracee<'_> {
 pub struct Tracer {
     pub ignore_unsupported_memops: bool,
     pub tiny86_only: bool,
+    pub decree_syscalls: bool,
     pub debug_on_fault: bool,
     pub disable_aslr: bool,
     pub bitness: u32,
@@ -694,6 +835,7 @@ impl From<&clap::ArgMatches> for Tracer {
         Self {
             ignore_unsupported_memops: matches.is_present("ignore-unsupported-memops"),
             tiny86_only: matches.is_present("tiny86-only"),
+            decree_syscalls: matches.value_of("syscall-model").unwrap() == "decree",
             debug_on_fault: matches.is_present("debug-on-fault"),
             disable_aslr: matches.is_present("disable-aslr"),
             bitness: matches.value_of("mode").unwrap().parse().unwrap(),
@@ -778,7 +920,8 @@ mod tests {
 
         Tracer {
             ignore_unsupported_memops: false,
-            tiny86_only: false,
+            tiny86_only: true,
+            decree_syscalls: true,
             debug_on_fault: false,
             disable_aslr: true,
             bitness: 32,
