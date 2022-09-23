@@ -1,4 +1,5 @@
 use std::convert::{TryFrom, TryInto};
+use std::io::IoSliceMut;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
@@ -570,7 +571,7 @@ impl<'a> Tracee<'a> {
         // TODO(ww): Check the length here.
         uio::process_vm_readv(
             self.tracee_pid,
-            &[uio::IoVec::from_mut_slice(&mut bytes)],
+            &mut [IoSliceMut::new(&mut bytes)],
             &[remote_iov],
         )?;
 
@@ -613,7 +614,7 @@ impl<'a> Tracee<'a> {
         // address incorrectly, or (2) calculated the mask incorrectly.
         if let Err(e) = uio::process_vm_readv(
             self.tracee_pid,
-            &[uio::IoVec::from_mut_slice(&mut bytes)],
+            &mut [IoSliceMut::new(&mut bytes)],
             &[remote_iov],
         ) {
             if self.tracer.debug_on_fault {
