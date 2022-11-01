@@ -7,6 +7,10 @@ stdenv.mkDerivation {
     cargo
   ];
   buildInputs = [
-    gdb nasm rustfmt git clippy
+    clippy
+    gdb
+    git
+    nasm
+    rustfmt
   ];
 }

@@ -18,9 +18,9 @@ jobs:
         with:
           nix_path: nixpkgs=channel:nixos-unstable
       - name: Format
-        run: nix-shell --pure --run "cargo fmt && git diff --exit-code"
+        run: nix-shell --run "cargo fmt && git diff --exit-code"
       - name: Lint
-        run: nix-shell --pure --run "cargo clippy -- -D warnings"
+        run: nix-shell --run "cargo clippy -- -D warnings"
   test:
     runs-on: ubuntu-latest
     steps:
@@ -29,6 +29,6 @@ jobs:
         with:
           nix_path: nixpkgs=channel:nixos-unstable
       - name: Build
-        run: nix-shell --pure --run "cargo build"
+        run: nix-shell --run "cargo build"
       - name: Test
-        run: nix-shell --pure --run "cargo test"
+        run: nix-shell --run "cargo test"
