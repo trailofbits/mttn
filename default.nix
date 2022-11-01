@@ -1,8 +1,12 @@
 with import <nixpkgs> {};
 stdenv.mkDerivation {
   name = "mttn";
-  nativeBuildInputs = [
-    cargo gdb nasm
-  ];
   src = ./.;
+
+  nativeBuildInputs = [
+    cargo
+  ];
+  buildInputs = [
+    gdb nasm rustfmt git clippy
+  ];
 }
