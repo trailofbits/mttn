@@ -1,6 +1,9 @@
 mttn
 ====
 
+> NOTE: this repository is deprecated.
+> Further development is continued in [_shol'va_](https://github.com/trailofbits/sholva).
+
 *memory tracer, take N*
 
 [![Build Status](https://github.com/trailofbits/mttn/workflows/CI/badge.svg)](https://github.com/trailofbits/mttn/actions?query=workflow%3ACI)
