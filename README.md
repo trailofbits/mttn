@@ -1,6 +1,8 @@
 mttn
 ====
 
+**ATTENTION**: Development of `mttn` has moved! All active development can be found under [sholva](https://github.com/trailofbits/sholva).
+
 *memory tracer, take N*
 
 [![Build Status](https://github.com/trailofbits/mttn/workflows/CI/badge.svg)](https://github.com/trailofbits/mttn/actions?query=workflow%3ACI)
